@@ -4,6 +4,7 @@ import { Sheet } from '@/components/Sheet';
 import { useToast } from '@/components/Toast';
 import { Button, Card, Field, Pill, RoleTag, Screen, SectionTitle, SettingRow, SubTitle, Toggle } from '@/components/UI';
 import { useStore } from '@/store/MockStore';
+import { useAuth } from '@/auth/AuthContext';
 import { useTheme } from '@/theme/ThemeContext';
 import { ACCENTS, AccentName, FONTS, RADII, THEMES, ThemeName } from '@/theme/tokens';
 import { ShieldIcon, TargetIcon } from '@/components/Icons';
@@ -15,6 +16,7 @@ const ACCENT_ORDER = Object.keys(ACCENTS) as AccentName[];
 export default function Settings() {
   const { theme, setThemeName, setAccentName } = useTheme();
   const { acct, applyInstructor, switchAccount } = useStore();
+  const { configured, session, appUser, signOut } = useAuth();
   const toast = useToast();
   const [timerSounds, setTimerSounds] = useState(true);
   const [roundAlerts, setRoundAlerts] = useState(true);
@@ -77,13 +79,20 @@ export default function Settings() {
 
       <SubTitle>Account</SubTitle>
       <Card>
-        <SettingRow label="Signed in as" sub={acct.email} right={<Pill title="Sign out" quiet onPress={() => toast('Sign-in arrives with Supabase Auth in M1')} />} />
         <SettingRow
-          label="Demo: switch account"
-          sub="Cycle Mike → Dana → Riley (admin) to see RLS & roles"
-          right={<Pill title="Switch" onPress={() => { const a = switchAccount(); toast('Now signed in as ' + a.email + ' — RLS re-filtered'); }} />}
-          last
+          label="Signed in as"
+          sub={configured ? `${session?.user.email ?? '—'}${appUser ? ` · ${appUser.role}` : ''}` : acct.email + ' (demo)'}
+          right={<Pill title="Sign out" quiet onPress={() => { if (configured) { signOut(); } else { toast('Demo mode — set Supabase env vars to enable real auth'); } }} />}
+          last={configured}
         />
+        {!configured && (
+          <SettingRow
+            label="Demo: switch account"
+            sub="Cycle Mike → Dana → Riley (admin) to see RLS & roles"
+            right={<Pill title="Switch" onPress={() => { const a = switchAccount(); toast('Now signed in as ' + a.email + ' — RLS re-filtered'); }} />}
+            last
+          />
+        )}
       </Card>
 
       <Text style={{ fontFamily: FONTS.digits, fontSize: 11, color: theme.muted, marginTop: 18 }}>Range Day · v0.2.0 · mock data, RLS simulated client-side</Text>

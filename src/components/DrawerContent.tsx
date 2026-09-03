@@ -4,6 +4,7 @@ import {
 } from '@react-navigation/drawer';
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useAuth } from '@/auth/AuthContext';
 import { useStore } from '@/store/MockStore';
 import { useTheme } from '@/theme/ThemeContext';
 import { FONTS } from '@/theme/tokens';
@@ -46,9 +47,10 @@ const NAV: NavEntry[] = [
 
 export function DrawerContent(props: DrawerContentComponentProps) {
   const { theme } = useTheme();
-  // Rendering convenience only — real enforcement is Supabase RLS (M1).
+  // Rendering convenience only — real enforcement is Supabase RLS.
   const { acct } = useStore();
-  const IS_ADMIN = acct.role === 'admin';
+  const { configured, isAdmin } = useAuth();
+  const IS_ADMIN = configured ? isAdmin : acct.role === 'admin';
   const activeRoute = props.state.routes[props.state.index]?.name;
 
   return (

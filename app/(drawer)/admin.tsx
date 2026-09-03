@@ -3,12 +3,17 @@ import { View } from 'react-native';
 import { useToast } from '@/components/Toast';
 import { Card, DiffPips, Empty, Muted, Note, NoteStrong, Pill, Row, Screen, SectionTitle, Strong, SubTitle } from '@/components/UI';
 import { useStore } from '@/store/MockStore';
+import { useAuth } from '@/auth/AuthContext';
+import { UserAdmin } from '@/components/UserAdmin';
 
 export default function Admin() {
   const { state, acct, approveDrill, rejectDrill, approveInstructor } = useStore();
+  const { configured, isAdmin } = useAuth();
   const toast = useToast();
 
-  if (acct.role !== 'admin') {
+  // Real role when auth is configured; mock role in demo mode.
+  const admin = configured ? isAdmin : acct.role === 'admin';
+  if (!admin) {
     return <Screen><SectionTitle>Moderation</SectionTitle><Empty>Admin access required.</Empty></Screen>;
   }
   const pend = state.db.pubDrills.filter((p) => p.status === 'pending');
@@ -18,6 +23,7 @@ export default function Admin() {
     <Screen>
       <SectionTitle>Moderation</SectionTitle>
       <Note><NoteStrong>Admin only.</NoteStrong> Instructor uploads publish freely; shooter submissions land here for review. Instructor applications also need sign-off.</Note>
+      {configured && <UserAdmin />}
       <SubTitle style={{ marginTop: 0 }}>Drill submissions</SubTitle>
       {pend.length ? pend.map((p) => (
         <Card key={p.id}>

@@ -1,7 +1,14 @@
-﻿# Range Day web/PWA — joins the HUB Caddy proxy network.
+# Range Day web/PWA — joins the HUB Caddy proxy network.
+# Credentials come from ./.env on the server (never committed):
+#   EXPO_PUBLIC_SUPABASE_URL=...
+#   EXPO_PUBLIC_SUPABASE_ANON_KEY=...
 services:
   rangeday-web:
-    build: .
+    build:
+      context: .
+      args:
+        EXPO_PUBLIC_SUPABASE_URL: ${EXPO_PUBLIC_SUPABASE_URL:-}
+        EXPO_PUBLIC_SUPABASE_ANON_KEY: ${EXPO_PUBLIC_SUPABASE_ANON_KEY:-}
     container_name: rangeday-web
     restart: unless-stopped
     networks:
