@@ -1,0 +1,12 @@
+﻿# Range Day web/PWA — joins the HUB Caddy proxy network.
+services:
+  rangeday-web:
+    build: .
+    container_name: rangeday-web
+    restart: unless-stopped
+    networks:
+      - hub_default
+
+networks:
+  hub_default:
+    external: true
