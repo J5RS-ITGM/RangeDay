@@ -10,6 +10,7 @@ import { useTheme } from '@/theme/ThemeContext';
 import { FONTS } from '@/theme/tokens';
 import {
   AdminIcon,
+  SignOutIcon,
   BarsIcon,
   ChatIcon,
   ChecklistIcon,
@@ -47,9 +48,9 @@ const NAV: NavEntry[] = [
 
 export function DrawerContent(props: DrawerContentComponentProps) {
   const { theme } = useTheme();
-  // Rendering convenience only — real enforcement is Supabase RLS.
+  // Rendering convenience only — real enforcement is server-side.
   const { acct } = useStore();
-  const { configured, isAdmin } = useAuth();
+  const { configured, isAdmin, appUser, signOut } = useAuth();
   const IS_ADMIN = configured ? isAdmin : acct.role === 'admin';
   const activeRoute = props.state.routes[props.state.index]?.name;
 
@@ -105,6 +106,26 @@ export function DrawerContent(props: DrawerContentComponentProps) {
           );
         })}
       </DrawerContentScrollView>
+
+      {configured && (
+        <Pressable
+          onPress={() => signOut()}
+          style={({ pressed }) => [
+            styles.item,
+            { borderLeftColor: 'transparent', backgroundColor: pressed ? theme.surface2 : 'transparent' },
+          ]}
+        >
+          <SignOutIcon color={theme.muted} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.itemLabel, { color: theme.muted, fontFamily: FONTS.display }]}>SIGN OUT</Text>
+            {appUser ? (
+              <Text style={{ color: theme.muted, fontSize: 10, marginTop: 1 }} numberOfLines={1}>
+                {appUser.email}
+              </Text>
+            ) : null}
+          </View>
+        </Pressable>
+      )}
 
       <View style={[styles.foot, { borderTopColor: theme.line }]}>
         <Text style={[styles.footText, { color: theme.muted }]}>

@@ -87,10 +87,10 @@ export function Target({ hits, onHit, onRemove }: Props) {
               }}
             />
           ))}
-          <SvgText x={230} y={360} textAnchor="middle" fontSize={34} fontWeight="700" fill={theme.tgtLine} opacity={0.28}>A</SvgText>
-          <SvgText x={130} y={330} textAnchor="middle" fontSize={22} fontWeight="700" fill={theme.tgtLine} opacity={0.28}>C</SvgText>
-          <SvgText x={70} y={330} textAnchor="middle" fontSize={22} fontWeight="700" fill={theme.tgtLine} opacity={0.25}>D</SvgText>
-          <SvgText x={230} y={150} textAnchor="middle" fontSize={18} fontWeight="700" fill={theme.tgtLine} opacity={0.28}>A</SvgText>
+          <SvgText x={225} y={420} textAnchor="middle" fontSize={34} fontWeight="700" fill={theme.tgtLine} opacity={0.28}>A</SvgText>
+          <SvgText x={100} y={440} textAnchor="middle" fontSize={22} fontWeight="700" fill={theme.tgtLine} opacity={0.28}>C</SvgText>
+          <SvgText x={34} y={480} textAnchor="middle" fontSize={22} fontWeight="700" fill={theme.tgtLine} opacity={0.25}>D</SvgText>
+          <SvgText x={225} y={122} textAnchor="middle" fontSize={18} fontWeight="700" fill={theme.tgtLine} opacity={0.28}>A</SvgText>
 
           {hits.map((h, i) =>
             h.x === null || h.y === null ? null : (

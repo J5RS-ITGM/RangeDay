@@ -119,6 +119,14 @@ export const SettingsIcon = (p: IconProps) => (
   </Base>
 );
 
+export const SignOutIcon = (p: IconProps) => (
+  <Base {...p}>
+    <Path d="M14 4H7a2 2 0 00-2 2v12a2 2 0 002 2h7" />
+    <Path d="M17 8l4 4-4 4" />
+    <Path d="M21 12H10" />
+  </Base>
+);
+
 export const MenuIcon = (p: IconProps) => (
   <Base {...p} strokeWidth={2}>
     <Path d="M4 6.5h16" />
