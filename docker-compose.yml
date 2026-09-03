@@ -2,6 +2,7 @@
 # Secrets come from ./.env on the server (gitignored):
 #   DB_PASSWORD=...       # postgres password
 #   SECRET_KEY=...        # JWT signing key (long random string)
+#   SIGNUP_MODE=open|closed  # closed = invite-only (default open)
 #   SMTP_HOST=...         # optional; reset links log to the API when unset
 #   SMTP_PORT=587
 #   SMTP_USER=...
@@ -22,6 +23,7 @@ services:
       DATABASE_URL: postgresql+psycopg://rangeday:${DB_PASSWORD}@rangeday-db:5432/rangeday
       SECRET_KEY: ${SECRET_KEY}
       APP_ORIGIN: https://range.jwbegroup.com
+      SIGNUP_MODE: ${SIGNUP_MODE:-open}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER:-}

@@ -2,9 +2,12 @@ import React, {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
 } from 'react';
+import { useAuth } from '@/auth/AuthContext';
+import { isDemo } from '@/lib/api';
 import {
   SEED_ACCOUNTS,
   SEED_CONTACTS,
@@ -76,7 +79,8 @@ interface StoreState {
 
 export const MAX_PROFILES = 2;
 
-const initialState: StoreState = {
+/** Demo mode: the full seeded dataset from the mockup. */
+const demoInitialState: StoreState = {
   db: {
     accounts: SEED_ACCOUNTS,
     contacts: SEED_CONTACTS,
@@ -98,6 +102,44 @@ const initialState: StoreState = {
   runStreak: 0,
   lastSavedDrill: null,
 };
+
+/**
+ * Real accounts start clean: no test runs, contacts, posts, firearms,
+ * or fake profiles. Built-in public drills and sessions stay — they're
+ * product content (the starter library), not test data.
+ */
+function cleanInitialState(): StoreState {
+  return {
+    db: {
+      accounts: [
+        {
+          id: 'me',
+          email: '',
+          org: 'org_default',
+          role: 'shooter',
+          profiles: [{ id: 'me-p1', name: 'Shooter', initial: 'S', sub: '' }],
+        },
+      ],
+      contacts: [],
+      drills: SEED_DRILLS.filter((d) => d.owner === 'sys' && d.vis === 'public'),
+      pubDrills: [],
+      sessions: SEED_SESSIONS.filter((s) => s.owner === 'sys' && s.vis === 'public'),
+      firearms: {},
+      equipment: {},
+      maint: {},
+      posts: [],
+      runs: [],
+    },
+    acctId: 'me',
+    profId: 'me-p1',
+    activeSess: null,
+    cmpSel: [],
+    histTab: 'runs',
+    qfDefaults: {},
+    runStreak: 0,
+    lastSavedDrill: null,
+  };
+}
 
 export const todayLabel = () =>
   new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -161,8 +203,36 @@ interface StoreValue {
 const StoreContext = createContext<StoreValue | null>(null);
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<StoreState>(initialState);
+  const { configured, appUser } = useAuth();
+  const [state, setState] = useState<StoreState>(() => (isDemo ? demoInitialState : cleanInitialState()));
   const update = useCallback((fn: Updater) => setState(fn), []);
+
+  // Real auth: mirror the signed-in account's identity/role into the local
+  // store so drills publish under the right name and role logic matches.
+  // (Local data persistence per account lands with the M2 sync work.)
+  useEffect(() => {
+    if (!configured || !appUser) return;
+    setState((s) => ({
+      ...s,
+      db: {
+        ...s.db,
+        accounts: s.db.accounts.map((a) =>
+          a.id === 'me'
+            ? {
+                ...a,
+                email: appUser.email,
+                role: appUser.role,
+                profiles: a.profiles.map((p, i) =>
+                  i === 0 && (p.name === 'Shooter' || p.sub === '')
+                    ? { ...p, name: appUser.display_name || appUser.email.split('@')[0], initial: (appUser.display_name || appUser.email)[0].toUpperCase(), sub: appUser.email }
+                    : p,
+                ),
+              }
+            : a,
+        ),
+      },
+    }));
+  }, [configured, appUser]);
 
   const acct = state.db.accounts.find((a) => a.id === state.acctId)!;
   const prof = acct.profiles.find((p) => p.id === state.profId) ?? acct.profiles[0];

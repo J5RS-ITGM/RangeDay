@@ -1,11 +1,12 @@
 import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { useAuth } from '@/auth/AuthContext';
 import { Button, Field, Hint, Screen, SectionTitle } from '@/components/UI';
 import { useToast } from '@/components/Toast';
 import { useTheme } from '@/theme/ThemeContext';
 import { FONTS, RADII } from '@/theme/tokens';
+import { api } from '@/lib/api';
 
 export default function Login() {
   const router = useRouter();
@@ -18,6 +19,12 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [signupOpen, setSignupOpen] = useState(true);
+
+  useEffect(() => {
+    if (!configured) return;
+    api.config().then((c) => setSignupOpen(c.signup_open)).catch(() => {});
+  }, [configured]);
 
   const submit = async () => {
     setError(null);
@@ -63,11 +70,17 @@ export default function Login() {
       )}
 
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 16 }}>
-        <Pressable onPress={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(null); }} hitSlop={8}>
-          <Text style={{ color: theme.accent, fontSize: 13, fontWeight: '600' }}>
-            {mode === 'signin' ? 'Create an account' : 'Have an account? Sign in'}
-          </Text>
-        </Pressable>
+        {signupOpen || mode === 'signup' ? (
+          <Pressable onPress={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(null); }} hitSlop={8}>
+            <Text style={{ color: theme.accent, fontSize: 13, fontWeight: '600' }}>
+              {mode === 'signin' ? 'Create an account' : 'Have an account? Sign in'}
+            </Text>
+          </Pressable>
+        ) : (
+          <Pressable onPress={() => router.push('/request-account')} hitSlop={8}>
+            <Text style={{ color: theme.accent, fontSize: 13, fontWeight: '600' }}>Request an account</Text>
+          </Pressable>
+        )}
         {mode === 'signin' && configured && (
           <Pressable onPress={() => router.push('/forgot-password')} hitSlop={8}>
             <Text style={{ color: theme.muted, fontSize: 13, fontWeight: '600' }}>Forgot password?</Text>

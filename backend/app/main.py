@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from . import emailer
 from .db import Base, engine, get_db
-from .models import ROLES, PasswordReset, User
+from .models import ROLES, AccountRequest, PasswordReset, User
 from .security import (
     hash_password,
     hash_reset_token,
@@ -24,6 +24,9 @@ from .security import (
 logging.basicConfig(level=logging.INFO)
 
 APP_ORIGIN = os.environ.get("APP_ORIGIN", "https://range.jwbegroup.com")
+# "open": anyone can sign up (first account still becomes admin).
+# "closed": only admin-created accounts; signup returns 403.
+SIGNUP_MODE = os.environ.get("SIGNUP_MODE", "open").lower()
 
 app = FastAPI(title="Range Day API", docs_url=None, redoc_url=None)
 
@@ -59,6 +62,26 @@ class ForgotIn(BaseModel):
 class ResetIn(BaseModel):
     token: str
     new_password: str = Field(min_length=8, max_length=200)
+
+
+class RequestAccountIn(BaseModel):
+    email: EmailStr
+    display_name: str = Field(default="", max_length=120)
+    note: str = Field(default="", max_length=500)
+
+
+class AccountRequestOut(BaseModel):
+    id: str
+    email: str
+    display_name: str
+    note: str
+    created_at: datetime
+
+
+class AdminCreateIn(BaseModel):
+    email: EmailStr
+    display_name: str = Field(default="", max_length=120)
+    role: str = Field(default="shooter")
 
 
 class UserPatch(BaseModel):
@@ -112,9 +135,19 @@ def admin_user(user: User = Depends(current_user)) -> User:
 
 
 # ---------- Auth ----------
+@app.get("/api/config")
+def config(db: Session = Depends(get_db)):
+    # First-run is always open so the bootstrap admin can be created.
+    first = db.scalar(select(User).limit(1)) is None
+    return {"signup_open": SIGNUP_MODE == "open" or first}
+
+
 @app.post("/api/auth/signup", response_model=AuthOut)
 def signup(body: SignupIn, db: Session = Depends(get_db)):
     email = body.email.lower()
+    first_check = db.scalar(select(User).limit(1)) is None
+    if SIGNUP_MODE != "open" and not first_check:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Registration is closed — ask an admin for an invite")
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with that email already exists")
     # Bootstrap: the very first account becomes admin so the panel is
@@ -178,6 +211,90 @@ def reset(body: ResetIn, db: Session = Depends(get_db)):
 @app.get("/api/admin/users", response_model=list[UserOut])
 def list_users(_: User = Depends(admin_user), db: Session = Depends(get_db)):
     return [to_out(u) for u in db.scalars(select(User).order_by(User.created_at)).all()]
+
+
+class InviteOut(BaseModel):
+    user: UserOut
+    invite_link: str
+
+
+def _create_invited_user(db: Session, email: str, display_name: str, role: str) -> tuple[User, str]:
+    """Create an account with an unknowable password and a one-time invite
+    link (password-reset token) through which the person sets their own."""
+    import secrets as _secrets
+    user = User(
+        email=email,
+        display_name=display_name.strip() or email.split("@")[0],
+        password_hash=hash_password(_secrets.token_urlsafe(24)),
+        role=role,
+    )
+    db.add(user)
+    db.flush()
+    raw, token_hash, expires = make_reset_token()
+    db.add(PasswordReset(user_id=user.id, token_hash=token_hash, expires_at=expires))
+    db.commit()
+    return user, f"{APP_ORIGIN}/reset-password?token={raw}"
+
+
+@app.post("/api/auth/request-account")
+def request_account(body: RequestAccountIn, db: Session = Depends(get_db)):
+    """Public: ask an admin for an account. Response never reveals whether
+    the email already has an account or a pending request."""
+    email = body.email.lower()
+    exists_user = db.scalar(select(User).where(User.email == email))
+    existing = db.scalar(select(AccountRequest).where(AccountRequest.email == email))
+    if not exists_user:
+        if existing:
+            existing.display_name = body.display_name.strip() or existing.display_name
+            existing.note = body.note.strip() or existing.note
+        else:
+            db.add(AccountRequest(email=email, display_name=body.display_name.strip(), note=body.note.strip()))
+        db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/admin/requests", response_model=list[AccountRequestOut])
+def list_requests(_: User = Depends(admin_user), db: Session = Depends(get_db)):
+    rows = db.scalars(select(AccountRequest).order_by(AccountRequest.created_at)).all()
+    return [AccountRequestOut(id=r.id, email=r.email, display_name=r.display_name, note=r.note, created_at=r.created_at) for r in rows]
+
+
+@app.post("/api/admin/requests/{request_id}/approve", response_model=InviteOut)
+def approve_request(request_id: str, tasks: BackgroundTasks, _: User = Depends(admin_user), db: Session = Depends(get_db)):
+    req = db.get(AccountRequest, request_id)
+    if not req:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such request")
+    if db.scalar(select(User).where(User.email == req.email)):
+        db.delete(req)
+        db.commit()
+        raise HTTPException(status.HTTP_409_CONFLICT, "An account with that email already exists")
+    user, link = _create_invited_user(db, req.email, req.display_name, "shooter")
+    db.delete(req)
+    db.commit()
+    tasks.add_task(emailer.send_reset_email, user.email, link)
+    return InviteOut(user=to_out(user), invite_link=link)
+
+
+@app.delete("/api/admin/requests/{request_id}")
+def reject_request(request_id: str, _: User = Depends(admin_user), db: Session = Depends(get_db)):
+    req = db.get(AccountRequest, request_id)
+    if not req:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such request")
+    db.delete(req)
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/admin/users", response_model=InviteOut)
+def admin_create_user(body: AdminCreateIn, tasks: BackgroundTasks, _: User = Depends(admin_user), db: Session = Depends(get_db)):
+    if body.role not in ROLES:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown role")
+    email = body.email.lower()
+    if db.scalar(select(User).where(User.email == email)):
+        raise HTTPException(status.HTTP_409_CONFLICT, "An account with that email already exists")
+    user, link = _create_invited_user(db, email, body.display_name, body.role)
+    tasks.add_task(emailer.send_reset_email, user.email, link)
+    return InviteOut(user=to_out(user), invite_link=link)
 
 
 @app.patch("/api/admin/users/{user_id}", response_model=UserOut)

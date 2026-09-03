@@ -29,6 +29,16 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
 
 
+class AccountRequest(Base):
+    __tablename__ = "account_requests"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    display_name: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    note: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
+
+
 class PasswordReset(Base):
     __tablename__ = "password_resets"
 

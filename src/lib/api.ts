@@ -68,7 +68,18 @@ async function request<T>(
   return data as T;
 }
 
+export interface AccountRequestRow {
+  id: string;
+  email: string;
+  display_name: string;
+  note: string;
+  created_at: string;
+}
+
 export const api = {
+  config: () => request<{ signup_open: boolean }>('/config'),
+  requestAccount: (email: string, displayName: string, note: string) =>
+    request<{ ok: boolean }>('/auth/request-account', { method: 'POST', body: { email, display_name: displayName, note } }),
   signup: (email: string, password: string, displayName: string) =>
     request<AuthResponse>('/auth/signup', { method: 'POST', body: { email, password, display_name: displayName } }),
   login: (email: string, password: string) =>
@@ -82,4 +93,11 @@ export const api = {
     request<AppUser>(`/admin/users/${id}`, { method: 'PATCH', body: patch, token }),
   adminDeleteUser: (token: string, id: string) =>
     request<{ ok: boolean }>(`/admin/users/${id}`, { method: 'DELETE', token }),
+  adminCreateUser: (token: string, body: { email: string; display_name: string; role: AppRole }) =>
+    request<{ user: AppUser; invite_link: string }>('/admin/users', { method: 'POST', body, token }),
+  adminListRequests: (token: string) => request<AccountRequestRow[]>('/admin/requests', { token }),
+  adminApproveRequest: (token: string, id: string) =>
+    request<{ user: AppUser; invite_link: string }>(`/admin/requests/${id}/approve`, { method: 'POST', token }),
+  adminRejectRequest: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/admin/requests/${id}`, { method: 'DELETE', token }),
 };

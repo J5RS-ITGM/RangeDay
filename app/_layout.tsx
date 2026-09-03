@@ -9,6 +9,7 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect } from 'react';
+import { Platform, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from '@/auth/AuthContext';
@@ -20,7 +21,7 @@ import { ThemeProvider, useTheme } from '@/theme/ThemeContext';
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 /** Screens reachable without a session */
-const PUBLIC_ROUTES = new Set(['login', 'forgot-password', 'reset-password']);
+const PUBLIC_ROUTES = new Set(['login', 'forgot-password', 'reset-password', 'request-account']);
 
 /**
  * The lock. When auth is configured, no session means no app: anything
@@ -45,6 +46,34 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/**
+ * Desktop frame: the design is a phone-width column (520px, per the
+ * mockup). On wide web viewports, center that column instead of
+ * stretching every screen across the monitor.
+ */
+function AppFrame({ children }: { children: React.ReactNode }) {
+  const { theme } = useTheme();
+  const { width } = useWindowDimensions();
+  const framed = Platform.OS === 'web' && width > 520;
+  if (!framed) return <>{children}</>;
+  return (
+    <View style={{ flex: 1, alignItems: 'center', backgroundColor: theme.bg }}>
+      <View
+        style={{
+          flex: 1,
+          width: '100%',
+          maxWidth: 520,
+          borderLeftWidth: StyleSheet.hairlineWidth,
+          borderRightWidth: StyleSheet.hairlineWidth,
+          borderColor: theme.line,
+        }}
+      >
+        {children}
+      </View>
+    </View>
+  );
+}
+
 function ThemedStack() {
   const { theme } = useTheme();
   return (
@@ -61,6 +90,7 @@ function ThemedStack() {
           <Stack.Screen name="(drawer)" />
           <Stack.Screen name="login" />
           <Stack.Screen name="forgot-password" />
+        <Stack.Screen name="request-account" />
           <Stack.Screen name="reset-password" />
           <Stack.Screen name="score" />
           <Stack.Screen name="session-edit" />
@@ -98,7 +128,9 @@ export default function RootLayout() {
           <AuthProvider>
             <StoreProvider>
               <ToastProvider>
-                <ThemedStack />
+                <AppFrame>
+                  <ThemedStack />
+                </AppFrame>
               </ToastProvider>
             </StoreProvider>
           </AuthProvider>
