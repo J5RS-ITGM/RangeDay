@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { Text } from 'react-native';
 import { useAuth } from '@/auth/AuthContext';
@@ -7,15 +7,16 @@ import { useToast } from '@/components/Toast';
 import { useTheme } from '@/theme/ThemeContext';
 
 /**
- * Landing page for the email reset link. Supabase's redirect carries a
- * recovery token; the client exchanges it for a session automatically
- * (detectSessionInUrl), after which updatePassword() works.
+ * Landing page for the email reset link:
+ * https://range.jwbegroup.com/reset-password?token=...
+ * The token is single-use and expires 30 minutes after it was requested.
  */
 export default function ResetPassword() {
   const router = useRouter();
   const { theme } = useTheme();
   const toast = useToast();
-  const { session, updatePassword } = useAuth();
+  const { resetPassword } = useAuth();
+  const { token } = useLocalSearchParams<{ token?: string }>();
   const [pw1, setPw1] = useState('');
   const [pw2, setPw2] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -23,22 +24,23 @@ export default function ResetPassword() {
 
   const submit = async () => {
     setError(null);
+    if (!token) return;
     if (pw1.length < 8) { setError('Password must be at least 8 characters'); return; }
     if (pw1 !== pw2) { setError('Passwords do not match'); return; }
     setBusy(true);
-    const e = await updatePassword(pw1);
+    const e = await resetPassword(token, pw1);
     setBusy(false);
     if (e) { setError(e); return; }
-    toast('Password updated');
-    router.replace('/');
+    toast('Password updated — sign in with it now');
+    router.replace('/login');
   };
 
   return (
     <Screen style={{ paddingTop: 40 }}>
       <SectionTitle>Set a new password</SectionTitle>
-      {!session ? (
+      {!token ? (
         <Hint style={{ color: theme.charlie }}>
-          This page needs to be opened from the reset link in your email. If you arrived from the link and still see this, the link may have expired — request a new one.
+          This page needs to be opened from the reset link in your email. Request a link from the sign-in screen if you need one.
         </Hint>
       ) : (
         <>

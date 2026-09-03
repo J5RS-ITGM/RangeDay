@@ -1,19 +1,58 @@
-# Range Day web/PWA — joins the HUB Caddy proxy network.
-# Credentials come from ./.env on the server (never committed):
-#   EXPO_PUBLIC_SUPABASE_URL=...
-#   EXPO_PUBLIC_SUPABASE_ANON_KEY=...
+# Range Day — web + API + Postgres, behind the HUB Caddy proxy.
+# Secrets come from ./.env on the server (gitignored):
+#   DB_PASSWORD=...       # postgres password
+#   SECRET_KEY=...        # JWT signing key (long random string)
+#   SMTP_HOST=...         # optional; reset links log to the API when unset
+#   SMTP_PORT=587
+#   SMTP_USER=...
+#   SMTP_PASS=...
+#   SMTP_FROM=...
 services:
   rangeday-web:
-    build:
-      context: .
-      args:
-        EXPO_PUBLIC_SUPABASE_URL: ${EXPO_PUBLIC_SUPABASE_URL:-}
-        EXPO_PUBLIC_SUPABASE_ANON_KEY: ${EXPO_PUBLIC_SUPABASE_ANON_KEY:-}
+    build: .
     container_name: rangeday-web
     restart: unless-stopped
-    networks:
-      - hub_default
+    networks: [hub_default]
+
+  rangeday-api:
+    build: ./backend
+    container_name: rangeday-api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://rangeday:${DB_PASSWORD}@rangeday-db:5432/rangeday
+      SECRET_KEY: ${SECRET_KEY}
+      APP_ORIGIN: https://range.jwbegroup.com
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+    depends_on:
+      rangeday-db:
+        condition: service_healthy
+    networks: [hub_default, rangeday_internal]
+
+  rangeday-db:
+    image: postgres:16-alpine
+    container_name: rangeday-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: rangeday
+      POSTGRES_USER: rangeday
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - rangeday_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rangeday -d rangeday"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [rangeday_internal]
+
+volumes:
+  rangeday_pgdata:
 
 networks:
   hub_default:
     external: true
+  rangeday_internal:

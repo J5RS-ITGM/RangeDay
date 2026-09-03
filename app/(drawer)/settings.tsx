@@ -16,7 +16,7 @@ const ACCENT_ORDER = Object.keys(ACCENTS) as AccentName[];
 export default function Settings() {
   const { theme, setThemeName, setAccentName } = useTheme();
   const { acct, applyInstructor, switchAccount } = useStore();
-  const { configured, session, appUser, signOut } = useAuth();
+  const { configured, appUser, signOut } = useAuth();
   const toast = useToast();
   const [timerSounds, setTimerSounds] = useState(true);
   const [roundAlerts, setRoundAlerts] = useState(true);
@@ -81,7 +81,7 @@ export default function Settings() {
       <Card>
         <SettingRow
           label="Signed in as"
-          sub={configured ? `${session?.user.email ?? '—'}${appUser ? ` · ${appUser.role}` : ''}` : acct.email + ' (demo)'}
+          sub={configured ? `${appUser?.email ?? '—'}${appUser ? ` · ${appUser.role}` : ''}` : acct.email + ' (demo)'}
           right={<Pill title="Sign out" quiet onPress={() => { if (configured) { signOut(); } else { toast('Demo mode — set Supabase env vars to enable real auth'); } }} />}
           last={configured}
         />

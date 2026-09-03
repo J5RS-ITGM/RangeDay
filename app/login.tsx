@@ -46,7 +46,7 @@ export default function Login() {
 
       {!configured && (
         <Hint style={{ color: theme.charlie }}>
-          Auth backend not configured yet — set EXPO_PUBLIC_SUPABASE_URL / _ANON_KEY and rebuild to lock the app. Continuing runs the demo with mock data.
+          Demo build (EXPO_PUBLIC_DEMO=1) — auth is bypassed and data is mock. Production builds are locked behind sign-in.
         </Hint>
       )}
 
