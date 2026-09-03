@@ -4,6 +4,7 @@ import {
 } from '@react-navigation/drawer';
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useStore } from '@/store/MockStore';
 import { useTheme } from '@/theme/ThemeContext';
 import { FONTS } from '@/theme/tokens';
 import {
@@ -43,11 +44,11 @@ const NAV: NavEntry[] = [
   { route: 'settings', label: 'Settings', Icon: SettingsIcon },
 ];
 
-// TODO(M1): replace with the signed-in account's role from Supabase.
-const IS_ADMIN = false;
-
 export function DrawerContent(props: DrawerContentComponentProps) {
   const { theme } = useTheme();
+  // Rendering convenience only — real enforcement is Supabase RLS (M1).
+  const { acct } = useStore();
+  const IS_ADMIN = acct.role === 'admin';
   const activeRoute = props.state.routes[props.state.index]?.name;
 
   return (
@@ -105,8 +106,7 @@ export function DrawerContent(props: DrawerContentComponentProps) {
 
       <View style={[styles.foot, { borderTopColor: theme.line }]}>
         <Text style={[styles.footText, { color: theme.muted }]}>
-          v0.1 scaffold · visibility rules are enforced by Supabase RLS, never
-          only in this client.
+          v0.2 · RLS simulated client-side.\n Real enforcement lives in Supabase policies.
         </Text>
       </View>
     </View>
