@@ -40,6 +40,14 @@ app.add_middleware(
 
 Base.metadata.create_all(bind=engine)
 
+# Additive mini-migrations for tables that already exist in production.
+# Postgres only; idempotent via IF NOT EXISTS. (SQLite dev DBs are throwaway.)
+if engine.dialect.name == "postgresql":
+    from sqlalchemy import text as _text
+    with engine.begin() as _conn:
+        _conn.execute(_text("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(20) NOT NULL DEFAULT ''"))
+        _conn.execute(_text("ALTER TABLE account_requests ADD COLUMN IF NOT EXISTS phone VARCHAR(20) NOT NULL DEFAULT ''"))
+
 bearer = HTTPBearer(auto_error=False)
 
 

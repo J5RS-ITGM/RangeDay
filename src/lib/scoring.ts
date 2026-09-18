@@ -36,11 +36,11 @@ export function breakdownString(c: ZoneCounts): string {
   return `${c.A}A ${c.C}C ${c.D}D ${c.miss}M`;
 }
 
-/** Target-space anchors for quick-fill clusters (viewBox 450×750) */
+/** Target-space anchors for quick-fill clusters (SVG target, viewBox x 80..367, y 0..447) */
 const QF_ANCHORS: Record<Exclude<Zone, 'miss'>, { x: number; y: number; cols: number; dx: number; dy: number }> = {
-  A: { x: 225, y: 320, cols: 4, dx: 30, dy: 32 },
-  C: { x: 100, y: 300, cols: 2, dx: 26, dy: 36 },
-  D: { x: 34, y: 340, cols: 1, dx: 0, dy: 40 },
+  A: { x: 223, y: 160, cols: 4, dx: 19, dy: 23 },
+  C: { x: 158, y: 150, cols: 2, dx: 15, dy: 26 },
+  D: { x: 114, y: 170, cols: 1, dx: 0, dy: 30 },
 };
 
 /**

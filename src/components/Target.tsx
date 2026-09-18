@@ -1,50 +1,52 @@
 import React, { useCallback, useState } from 'react';
 import { GestureResponderEvent, LayoutChangeEvent, StyleSheet, View } from 'react-native';
-import Svg, { Circle, G, Path, Text as SvgText } from 'react-native-svg';
+import Svg, {
+  Defs,
+  G,
+  LinearGradient,
+  Path,
+  Rect,
+  Stop,
+  Circle,
+  Text as SvgText,
+} from 'react-native-svg';
 import { useTheme } from '@/theme/ThemeContext';
 import { RADII } from '@/theme/tokens';
 import { Hit, Zone } from '@/store/types';
 
-export const TARGET_W = 460;
-export const TARGET_H = 760;
+/**
+ * USPSA target rendered from Eric's supplied SVG (USPSA_Target.svg,
+ * traced from a photograph). The artwork paths are used verbatim; the
+ * viewBox is cropped from the original 447x447 canvas to the target
+ * silhouette (x 80..367). Tap regions are transparent overlays stacked
+ * per zone; the cardboard between the silhouette edge and the dashed
+ * outer scoring boundary is the NON-SCORING BORDER and records a miss,
+ * as on a real target. Head outside the head A-box scores as C
+ * (model tracks A/C/D/miss).
+ */
 
-/** Zone paths from the mockup, in a 460×760 viewBox. Order = paint order. */
-const ZONES: { zone: Exclude<Zone, 'miss'>; d: string; sw: number }[] = [
-  {
-    zone: 'D',
-    sw: 3,
-    d: 'M40,300 L40,232 Q40,214 58,210 L402,210 Q420,214 420,232 L420,300 Q420,470 380,560 Q345,632 230,690 Q115,632 80,560 Q40,470 40,300 Z',
-  },
-  {
-    zone: 'C',
-    sw: 2,
-    d: 'M96,300 L96,258 Q96,250 104,250 L356,250 Q364,250 364,258 L364,300 Q364,430 336,505 Q312,560 230,600 Q148,560 124,505 Q96,430 96,300 Z',
-  },
-  {
-    zone: 'A',
-    sw: 2,
-    d: 'M170,300 L170,262 L290,262 L290,300 Q290,412 272,470 Q254,522 230,540 Q206,522 188,470 Q170,412 170,300 Z',
-  },
-  {
-    zone: 'C',
-    sw: 2.5,
-    d: 'M150,150 Q150,70 230,70 Q310,70 310,150 L310,196 Q310,204 302,204 L158,204 Q150,204 150,196 Z',
-  },
-  { zone: 'A', sw: 2, d: 'M186,150 Q186,104 230,104 Q274,104 274,150 L274,190 L186,190 Z' },
-];
+const VIEW_X = 80;
+export const TARGET_W = 287;
+export const TARGET_H = 447;
+
+// --- artwork paths, verbatim from the SVG ---
+const OUTLINE = 'M174 0H273V85.5H323.5L359.5 121.5V357L313 447H133.5L87.5 357V121.5L122.5 85.5H174Z';
+const OUTER_BOUNDARY =
+  'M188 6.5H258.5Q266.5 6.5 266.5 14.5V92H320.5L353 124.5V354.5L309 440.5H137.5L94 354.5V125L125.5 92H180V14.5Q180 6.5 188 6.5Z';
+const C_BODY_OPEN =
+  'M179 93.5L142 115.5Q137.5 118 137.5 125V284.5Q137.5 289 139.5 293.5L167.5 354H280.5L307.5 293.5Q309.5 289 309.5 284.5V125Q309.5 119 305 116L268 93.5';
+const C_BODY_CLOSED = C_BODY_OPEN + 'Z';
+// Head portion of the scoring area (down to the neck line), for C hit-testing
+const HEAD_REGION = 'M188 6.5H258.5Q266.5 6.5 266.5 14.5V92H180V14.5Q180 6.5 188 6.5Z';
+const HEAD_A = { x: 194, y: 20.5, w: 59, h: 31, rx: 7 };
+const BODY_A = { x: 180, y: 122, w: 86.5, h: 162.5, rx: 8.5 };
 
 interface Props {
   hits: Hit[];
-  onHit: (zone: Exclude<Zone, 'miss'>, x: number, y: number) => void;
+  onHit: (zone: Zone, x: number, y: number) => void;
   onRemove: (index: number) => void;
 }
 
-/**
- * Touch handling: each zone Path gets its own onPress so hit-testing is
- * done by the SVG layer (including the head/body overlap). We convert the
- * press location from view pixels to target-space using the measured
- * layout size. Tapping an existing marker removes it.
- */
 export function Target({ hits, onHit, onRemove }: Props) {
   const { theme } = useTheme();
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -62,42 +64,75 @@ export function Target({ hits, onHit, onRemove }: Props) {
       const offX = (size.w - TARGET_W * scale) / 2;
       const offY = (size.h - TARGET_H * scale) / 2;
       const { locationX, locationY } = e.nativeEvent;
-      return { x: (locationX - offX) / scale, y: (locationY - offY) / scale };
+      return { x: VIEW_X + (locationX - offX) / scale, y: (locationY - offY) / scale };
     },
     [size],
   );
 
-  const fill: Record<Exclude<Zone, 'miss'>, string> = { A: theme.tgtA, C: theme.tgtC, D: theme.tgtD };
+  const press = (zone: Zone) => (e: GestureResponderEvent) => {
+    const p = toTarget(e);
+    if (p) onHit(zone, p.x, p.y);
+  };
+
   const dot: Record<Zone, string> = { A: theme.alpha, C: theme.charlie, D: theme.delta, miss: theme.miss };
+  const hitFill = 'rgba(0,0,0,0.01)'; // effectively invisible, still pressable
 
   return (
     <View style={[styles.wrap, { backgroundColor: theme.surface, borderColor: theme.line }]}>
       <View style={styles.stage} onLayout={onLayout}>
-        <Svg width="100%" height="100%" viewBox={`0 0 ${TARGET_W} ${TARGET_H}`} preserveAspectRatio="xMidYMid meet">
-          {ZONES.map((z, i) => (
-            <Path
-              key={i}
-              d={z.d}
-              fill={fill[z.zone]}
-              stroke={theme.tgtLine}
-              strokeWidth={z.sw}
-              onPress={(e) => {
-                const p = toTarget(e);
-                if (p) onHit(z.zone, p.x, p.y);
-              }}
-            />
-          ))}
-          <SvgText x={225} y={420} textAnchor="middle" fontSize={34} fontWeight="700" fill={theme.tgtLine} opacity={0.28}>A</SvgText>
-          <SvgText x={100} y={440} textAnchor="middle" fontSize={22} fontWeight="700" fill={theme.tgtLine} opacity={0.28}>C</SvgText>
-          <SvgText x={34} y={480} textAnchor="middle" fontSize={22} fontWeight="700" fill={theme.tgtLine} opacity={0.25}>D</SvgText>
-          <SvgText x={225} y={122} textAnchor="middle" fontSize={18} fontWeight="700" fill={theme.tgtLine} opacity={0.28}>A</SvgText>
+        <Svg
+          width="100%"
+          height="100%"
+          viewBox={`${VIEW_X} 0 ${TARGET_W} ${TARGET_H}`}
+          preserveAspectRatio="xMidYMid meet"
+        >
+          <Defs>
+            <LinearGradient id="cardboard" x1="0" y1="0" x2="1" y2="0">
+              <Stop offset="0" stopColor="#b98b65" />
+              <Stop offset="0.48" stopColor="#c29a74" />
+              <Stop offset="1" stopColor="#b88b65" />
+            </LinearGradient>
+          </Defs>
 
+          {/* --- artwork (from USPSA_Target.svg) --- */}
+          <Path d={OUTLINE} fill="url(#cardboard)" stroke="#a77b57" strokeWidth={0.65} />
+          <G
+            fill="none"
+            stroke="#62452f"
+            strokeWidth={1.1}
+            strokeDasharray="1.65 2.65"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <Path d={OUTER_BOUNDARY} />
+            <Rect x={HEAD_A.x} y={HEAD_A.y} width={HEAD_A.w} height={HEAD_A.h} rx={HEAD_A.rx} />
+            <Path d={C_BODY_OPEN} />
+            <Rect x={BODY_A.x} y={BODY_A.y} width={BODY_A.w} height={BODY_A.h} rx={BODY_A.rx} />
+          </G>
+          <G fill="#654a34" fontSize={14} textAnchor="middle">
+            <SvgText x={223.5} y={41}>A</SvgText>
+            <SvgText x={117} y={226}>D</SvgText>
+            <SvgText x={157.5} y={226}>C</SvgText>
+            <SvgText x={223.5} y={226}>A</SvgText>
+            <SvgText x={287.5} y={226}>C</SvgText>
+            <SvgText x={335} y={226}>D</SvgText>
+          </G>
+
+          {/* --- tap regions, bottom to top; topmost under the finger wins --- */}
+          <Path d={OUTLINE} fill={hitFill} onPress={press('miss')} />
+          <Path d={OUTER_BOUNDARY} fill={hitFill} onPress={press('D')} />
+          <Path d={HEAD_REGION} fill={hitFill} onPress={press('C')} />
+          <Path d={C_BODY_CLOSED} fill={hitFill} onPress={press('C')} />
+          <Rect x={HEAD_A.x} y={HEAD_A.y} width={HEAD_A.w} height={HEAD_A.h} rx={HEAD_A.rx} fill={hitFill} onPress={press('A')} />
+          <Rect x={BODY_A.x} y={BODY_A.y} width={BODY_A.w} height={BODY_A.h} rx={BODY_A.rx} fill={hitFill} onPress={press('A')} />
+
+          {/* --- hit markers --- */}
           {hits.map((h, i) =>
             h.x === null || h.y === null ? null : (
               <G key={i} onPress={() => onRemove(i)}>
-                <Circle cx={h.x} cy={h.y} r={15} fill={dot[h.zone]} stroke={theme.bg} strokeWidth={2.5} />
-                <SvgText x={h.x} y={h.y + 6} textAnchor="middle" fontSize={17} fontWeight="700" fill={theme.bg}>
-                  {h.zone}
+                <Circle cx={h.x} cy={h.y} r={10} fill={dot[h.zone]} stroke={theme.bg} strokeWidth={2} />
+                <SvgText x={h.x} y={h.y + 4} textAnchor="middle" fontSize={11} fontWeight="700" fill={theme.bg}>
+                  {h.zone === 'miss' ? 'M' : h.zone}
                 </SvgText>
               </G>
             ),
@@ -110,5 +145,5 @@ export function Target({ hits, onHit, onRemove }: Props) {
 
 const styles = StyleSheet.create({
   wrap: { borderWidth: StyleSheet.hairlineWidth * 2, borderRadius: RADII.card, padding: 14, marginBottom: 14 },
-  stage: { width: '100%', aspectRatio: TARGET_W / TARGET_H },
+  stage: { width: '100%', aspectRatio: TARGET_W / TARGET_H, alignSelf: 'center', maxWidth: 340 },
 });
