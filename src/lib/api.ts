@@ -69,6 +69,19 @@ async function request<T>(
   return data as T;
 }
 
+export interface ContactRow {
+  id: string;
+  status: 'pending' | 'accepted';
+  direction: 'outgoing' | 'incoming';
+  user: { id: string; display_name: string; email: string; phone: string };
+}
+
+export interface ContactsResponse {
+  contacts: ContactRow[];
+  incoming: ContactRow[];
+  outgoing: ContactRow[];
+}
+
 export interface AppSettings {
   signup_mode: 'open' | 'closed';
   phone_verification: 'required' | 'off';
@@ -130,6 +143,13 @@ export const api = {
   adminCreateUser: (token: string, body: { email: string; display_name: string; role: AppRole; phone?: string }) =>
     request<{ user: AppUser; invite_link: string; sms_sent: boolean }>('/admin/users', { method: 'POST', body, token }),
   adminListRequests: (token: string) => request<AccountRequestRow[]>('/admin/requests', { token }),
+  listContacts: (token: string) => request<ContactsResponse>('/contacts', { token }),
+  addContact: (token: string, identifier: string) =>
+    request<ContactRow>('/contacts', { method: 'POST', body: { identifier }, token }),
+  acceptContact: (token: string, id: string) =>
+    request<ContactRow>(`/contacts/${id}/accept`, { method: 'POST', token }),
+  removeContact: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/contacts/${id}`, { method: 'DELETE', token }),
   adminGetSettings: (token: string) => request<AppSettings>('/admin/settings', { token }),
   adminPatchSettings: (token: string, patch: Partial<Record<'signup_mode' | 'phone_verification' | 'twilio_account_sid' | 'twilio_auth_token' | 'twilio_verify_sid' | 'twilio_sms_from' | 'smtp_host' | 'smtp_port' | 'smtp_user' | 'smtp_password' | 'smtp_from', string>>) =>
     request<AppSettings>('/admin/settings', { method: 'PATCH', body: patch, token }),

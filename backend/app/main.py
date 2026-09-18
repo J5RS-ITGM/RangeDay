@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from . import emailer, phone as phone_mod, settings as settings_mod
 from .db import Base, engine, get_db
-from .models import ROLES, AccountRequest, AppSetting, PasswordReset, PhoneCode, User
+from .models import ROLES, AccountRequest, AppSetting, Connection, PasswordReset, PhoneCode, User
 from .security import (
     INVITE_TTL,
     hash_password,
@@ -340,6 +340,30 @@ def list_users(_: User = Depends(admin_user), db: Session = Depends(get_db)):
     return [to_out(u) for u in db.scalars(select(User).order_by(User.created_at)).all()]
 
 
+class ContactAddIn(BaseModel):
+    identifier: str = Field(min_length=3, max_length=255)  # email or phone
+
+
+class ContactUser(BaseModel):
+    id: str
+    display_name: str
+    email: str
+    phone: str
+
+
+class ContactOut(BaseModel):
+    id: str
+    status: str
+    direction: str  # "outgoing" | "incoming"
+    user: ContactUser  # the OTHER person
+
+
+class ContactsOut(BaseModel):
+    contacts: list[ContactOut]
+    incoming: list[ContactOut]
+    outgoing: list[ContactOut]
+
+
 class SettingsOut(BaseModel):
     signup_mode: str
     phone_verification: str
@@ -453,6 +477,30 @@ def reject_request(request_id: str, _: User = Depends(admin_user), db: Session =
     return {"ok": True}
 
 
+class ContactAddIn(BaseModel):
+    identifier: str = Field(min_length=3, max_length=255)  # email or phone
+
+
+class ContactUser(BaseModel):
+    id: str
+    display_name: str
+    email: str
+    phone: str
+
+
+class ContactOut(BaseModel):
+    id: str
+    status: str
+    direction: str  # "outgoing" | "incoming"
+    user: ContactUser  # the OTHER person
+
+
+class ContactsOut(BaseModel):
+    contacts: list[ContactOut]
+    incoming: list[ContactOut]
+    outgoing: list[ContactOut]
+
+
 class SettingsOut(BaseModel):
     signup_mode: str
     phone_verification: str
@@ -482,6 +530,91 @@ class SettingsPatch(BaseModel):
     smtp_user: str | None = None
     smtp_password: str | None = None
     smtp_from: str | None = None
+
+
+def _contact_out(c: Connection, me: User, other: User) -> ContactOut:
+    return ContactOut(
+        id=c.id,
+        status=c.status,
+        direction="outgoing" if c.requester_id == me.id else "incoming",
+        user=ContactUser(id=other.id, display_name=other.display_name, email=other.email, phone=other.phone),
+    )
+
+
+@app.get("/api/contacts", response_model=ContactsOut)
+def list_contacts(me: User = Depends(current_user), db: Session = Depends(get_db)):
+    rows = db.scalars(
+        select(Connection).where((Connection.requester_id == me.id) | (Connection.addressee_id == me.id)).order_by(Connection.created_at)
+    ).all()
+    out = ContactsOut(contacts=[], incoming=[], outgoing=[])
+    for c in rows:
+        other = db.get(User, c.addressee_id if c.requester_id == me.id else c.requester_id)
+        if not other:
+            continue
+        item = _contact_out(c, me, other)
+        if c.status == "accepted":
+            out.contacts.append(item)
+        elif item.direction == "incoming":
+            out.incoming.append(item)
+        else:
+            out.outgoing.append(item)
+    return out
+
+
+@app.post("/api/contacts", response_model=ContactOut)
+def add_contact(body: ContactAddIn, me: User = Depends(current_user), db: Session = Depends(get_db)):
+    ident = body.identifier.strip()
+    other: User | None = None
+    if "@" in ident:
+        other = db.scalar(select(User).where(User.email == ident.lower()))
+    else:
+        normalized = phone_mod.normalize_phone(ident)
+        if not normalized:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Enter an email address or a phone number")
+        other = db.scalar(select(User).where(User.phone == normalized))
+    if not other or other.disabled:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No Range Day account matches that email or phone")
+    if other.id == me.id:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "That's you")
+    existing = db.scalar(
+        select(Connection).where(
+            ((Connection.requester_id == me.id) & (Connection.addressee_id == other.id))
+            | ((Connection.requester_id == other.id) & (Connection.addressee_id == me.id))
+        )
+    )
+    if existing:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Already connected" if existing.status == "accepted" else "A request between you two is already pending",
+        )
+    c = Connection(requester_id=me.id, addressee_id=other.id, status="pending")
+    db.add(c)
+    db.commit()
+    return _contact_out(c, me, other)
+
+
+@app.post("/api/contacts/{conn_id}/accept", response_model=ContactOut)
+def accept_contact(conn_id: str, me: User = Depends(current_user), db: Session = Depends(get_db)):
+    c = db.get(Connection, conn_id)
+    if not c or (me.id not in (c.requester_id, c.addressee_id)):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such request")
+    if c.addressee_id != me.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the person who received the request can accept it")
+    c.status = "accepted"
+    db.commit()
+    other = db.get(User, c.requester_id)
+    return _contact_out(c, me, other)
+
+
+@app.delete("/api/contacts/{conn_id}")
+def remove_contact(conn_id: str, me: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Decline an incoming request, cancel an outgoing one, or remove a contact."""
+    c = db.get(Connection, conn_id)
+    if not c or (me.id not in (c.requester_id, c.addressee_id)):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such request")
+    db.delete(c)
+    db.commit()
+    return {"ok": True}
 
 
 def _settings_out(db: Session) -> SettingsOut:
@@ -518,6 +651,91 @@ def put_settings(body: SettingsPatch, _: User = Depends(admin_user), db: Session
             db.add(AppSetting(key=key, value=val.strip()))
     db.commit()
     return _settings_out(db)
+
+
+def _contact_out(c: Connection, me: User, other: User) -> ContactOut:
+    return ContactOut(
+        id=c.id,
+        status=c.status,
+        direction="outgoing" if c.requester_id == me.id else "incoming",
+        user=ContactUser(id=other.id, display_name=other.display_name, email=other.email, phone=other.phone),
+    )
+
+
+@app.get("/api/contacts", response_model=ContactsOut)
+def list_contacts(me: User = Depends(current_user), db: Session = Depends(get_db)):
+    rows = db.scalars(
+        select(Connection).where((Connection.requester_id == me.id) | (Connection.addressee_id == me.id)).order_by(Connection.created_at)
+    ).all()
+    out = ContactsOut(contacts=[], incoming=[], outgoing=[])
+    for c in rows:
+        other = db.get(User, c.addressee_id if c.requester_id == me.id else c.requester_id)
+        if not other:
+            continue
+        item = _contact_out(c, me, other)
+        if c.status == "accepted":
+            out.contacts.append(item)
+        elif item.direction == "incoming":
+            out.incoming.append(item)
+        else:
+            out.outgoing.append(item)
+    return out
+
+
+@app.post("/api/contacts", response_model=ContactOut)
+def add_contact(body: ContactAddIn, me: User = Depends(current_user), db: Session = Depends(get_db)):
+    ident = body.identifier.strip()
+    other: User | None = None
+    if "@" in ident:
+        other = db.scalar(select(User).where(User.email == ident.lower()))
+    else:
+        normalized = phone_mod.normalize_phone(ident)
+        if not normalized:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Enter an email address or a phone number")
+        other = db.scalar(select(User).where(User.phone == normalized))
+    if not other or other.disabled:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No Range Day account matches that email or phone")
+    if other.id == me.id:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "That's you")
+    existing = db.scalar(
+        select(Connection).where(
+            ((Connection.requester_id == me.id) & (Connection.addressee_id == other.id))
+            | ((Connection.requester_id == other.id) & (Connection.addressee_id == me.id))
+        )
+    )
+    if existing:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Already connected" if existing.status == "accepted" else "A request between you two is already pending",
+        )
+    c = Connection(requester_id=me.id, addressee_id=other.id, status="pending")
+    db.add(c)
+    db.commit()
+    return _contact_out(c, me, other)
+
+
+@app.post("/api/contacts/{conn_id}/accept", response_model=ContactOut)
+def accept_contact(conn_id: str, me: User = Depends(current_user), db: Session = Depends(get_db)):
+    c = db.get(Connection, conn_id)
+    if not c or (me.id not in (c.requester_id, c.addressee_id)):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such request")
+    if c.addressee_id != me.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the person who received the request can accept it")
+    c.status = "accepted"
+    db.commit()
+    other = db.get(User, c.requester_id)
+    return _contact_out(c, me, other)
+
+
+@app.delete("/api/contacts/{conn_id}")
+def remove_contact(conn_id: str, me: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Decline an incoming request, cancel an outgoing one, or remove a contact."""
+    c = db.get(Connection, conn_id)
+    if not c or (me.id not in (c.requester_id, c.addressee_id)):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such request")
+    db.delete(c)
+    db.commit()
+    return {"ok": True}
 
 
 def _settings_out(db: Session) -> SettingsOut:

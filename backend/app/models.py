@@ -49,6 +49,18 @@ class AppSetting(Base):
     value: Mapped[str] = mapped_column(String(500), default="", nullable=False)
 
 
+class Connection(Base):
+    """A contact link between two accounts. Created pending by the
+    requester; accepted by the addressee makes it mutual."""
+    __tablename__ = "connections"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    requester_id: Mapped[str] = mapped_column(String(32), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    addressee_id: Mapped[str] = mapped_column(String(32), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)  # pending | accepted
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
+
+
 class PhoneCode(Base):
     """Dev-fallback verification codes (Twilio absent). 10 min, 5 attempts."""
     __tablename__ = "phone_codes"
