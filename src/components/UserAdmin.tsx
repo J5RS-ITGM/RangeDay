@@ -31,6 +31,7 @@ export function UserAdmin() {
   const [invRole, setInvRole] = useState<AppRole>('shooter');
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [requests, setRequests] = useState<AccountRequestRow[]>([]);
+  const [phoneEdit, setPhoneEdit] = useState<{ id: string; value: string } | null>(null);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -146,6 +147,9 @@ export function UserAdmin() {
                   <Muted style={{ fontSize: 11 }}>
                     {u.email} · joined {new Date(u.created_at).toLocaleDateString()}
                   </Muted>
+                  <Muted style={{ fontSize: 11 }}>
+                    {u.phone ? `📱 ${u.phone}` : 'No phone on file — SMS reset unavailable'}
+                  </Muted>
                 </View>
                 {!self && (
                   <View style={{ flexDirection: 'row', gap: 6 }}>
@@ -173,6 +177,37 @@ export function UserAdmin() {
                   </View>
                 )}
               </Row>
+              {phoneEdit?.id === u.id ? (
+                <View style={{ marginTop: 10 }}>
+                  <Field
+                    label="Mobile phone"
+                    value={phoneEdit.value}
+                    onChangeText={(v) => setPhoneEdit({ id: u.id, value: v })}
+                    placeholder="(630) 555-0123 — leave empty to clear"
+                    keyboardType="phone-pad"
+                  />
+                  <View style={{ flexDirection: 'row', gap: 6 }}>
+                    <Pill
+                      title="Save phone"
+                      onPress={() => {
+                        const v = phoneEdit.value;
+                        setPhoneEdit(null);
+                        run(() => api.adminPatchUser(token!, u.id, { phone: v }), v.trim() ? 'Phone updated' : 'Phone cleared');
+                      }}
+                    />
+                    <Pill title="Cancel" quiet onPress={() => setPhoneEdit(null)} />
+                  </View>
+                </View>
+              ) : (
+                <View style={{ marginTop: 8 }}>
+                  <Pill
+                    title={u.phone ? 'Edit phone' : 'Add phone'}
+                    quiet
+                    style={{ alignSelf: 'flex-start' }}
+                    onPress={() => setPhoneEdit({ id: u.id, value: u.phone })}
+                  />
+                </View>
+              )}
               <View style={{ marginTop: 10 }}>
                 <Choice<AppRole>
                   options={ROLES}

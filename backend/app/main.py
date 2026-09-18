@@ -115,12 +115,14 @@ class AdminCreateIn(BaseModel):
 class UserPatch(BaseModel):
     role: str | None = None
     disabled: bool | None = None
+    phone: str | None = None  # "" clears; otherwise normalized + unique
 
 
 class UserOut(BaseModel):
     id: str
     email: str
     display_name: str
+    phone: str
     role: str
     disabled: bool
     created_at: datetime
@@ -133,7 +135,7 @@ class AuthOut(BaseModel):
 
 def to_out(u: User) -> UserOut:
     return UserOut(
-        id=u.id, email=u.email, display_name=u.display_name,
+        id=u.id, email=u.email, display_name=u.display_name, phone=u.phone,
         role=u.role, disabled=u.disabled, created_at=u.created_at,
     )
 
@@ -407,6 +409,17 @@ def patch_user(user_id: str, body: UserPatch, admin: User = Depends(admin_user),
         if user.id == admin.id and body.disabled:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "You cannot disable your own account")
         user.disabled = body.disabled
+    if body.phone is not None:
+        if body.phone.strip() == "":
+            user.phone = ""
+        else:
+            normalized = phone_mod.normalize_phone(body.phone)
+            if not normalized:
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Enter a valid phone number")
+            other = db.scalar(select(User).where(User.phone == normalized, User.id != user.id))
+            if other:
+                raise HTTPException(status.HTTP_409_CONFLICT, "Another account already uses that phone number")
+            user.phone = normalized
     db.commit()
     return to_out(user)
 

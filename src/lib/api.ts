@@ -19,6 +19,7 @@ export interface AppUser {
   id: string;
   email: string;
   display_name: string;
+  phone: string;
   role: AppRole;
   disabled: boolean;
   created_at: string;
@@ -105,7 +106,7 @@ export const api = {
   reset: (token: string, newPassword: string) =>
     request<{ ok: boolean }>('/auth/reset', { method: 'POST', body: { token, new_password: newPassword } }),
   adminListUsers: (token: string) => request<AppUser[]>('/admin/users', { token }),
-  adminPatchUser: (token: string, id: string, patch: { role?: AppRole; disabled?: boolean }) =>
+  adminPatchUser: (token: string, id: string, patch: { role?: AppRole; disabled?: boolean; phone?: string }) =>
     request<AppUser>(`/admin/users/${id}`, { method: 'PATCH', body: patch, token }),
   adminDeleteUser: (token: string, id: string) =>
     request<{ ok: boolean }>(`/admin/users/${id}`, { method: 'DELETE', token }),
