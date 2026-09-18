@@ -13,6 +13,7 @@ from . import emailer, phone as phone_mod, settings as settings_mod
 from .db import Base, engine, get_db
 from .models import ROLES, AccountRequest, AppSetting, PasswordReset, PhoneCode, User
 from .security import (
+    INVITE_TTL,
     hash_password,
     hash_reset_token,
     make_access_token,
@@ -138,6 +139,7 @@ class AdminCreateIn(BaseModel):
     email: EmailStr
     display_name: str = Field(default="", max_length=120)
     role: str = Field(default="shooter")
+    phone: str = Field(default="", max_length=25)  # if set: stored + invite texted
 
 
 class UserPatch(BaseModel):
@@ -313,7 +315,7 @@ def forgot(body: ForgotIn, tasks: BackgroundTasks, db: Session = Depends(get_db)
         db.add(PasswordReset(user_id=user.id, token_hash=token_hash, expires_at=expires))
         db.commit()
         link = f"{APP_ORIGIN}/reset-password?token={raw}"
-        tasks.add_task(emailer.send_reset_email, user.email, link)
+        tasks.add_task(emailer.send_reset_email, user.email, link, settings_mod.smtp_cfg(db))
     return {"ok": True}
 
 
@@ -343,8 +345,16 @@ class SettingsOut(BaseModel):
     phone_verification: str
     twilio_account_sid: str
     twilio_verify_sid: str
+    twilio_sms_from: str
     twilio_auth_token_set: bool
     twilio_configured: bool
+    sms_sender_configured: bool
+    smtp_host: str
+    smtp_port: str
+    smtp_user: str
+    smtp_from: str
+    smtp_password_set: bool
+    email_configured: bool
 
 
 class SettingsPatch(BaseModel):
@@ -353,14 +363,26 @@ class SettingsPatch(BaseModel):
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
     twilio_verify_sid: str | None = None
+    twilio_sms_from: str | None = None
+    smtp_host: str | None = None
+    smtp_port: str | None = None
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str | None = None
 
 
 class InviteOut(BaseModel):
     user: UserOut
     invite_link: str
+    sms_sent: bool = False
 
 
-def _create_invited_user(db: Session, email: str, display_name: str, role: str) -> tuple[User, str]:
+def _sms_invite(db: Session, phone: str, link: str) -> bool:
+    body = f"You're invited to Range Day. Set your password here (link expires in 24h): {link}"
+    return phone_mod.send_sms(phone, body, settings_mod.messaging_cfg(db))
+
+
+def _create_invited_user(db: Session, email: str, display_name: str, role: str, phone: str = "") -> tuple[User, str]:
     """Create an account with an unknowable password and a one-time invite
     link (password-reset token) through which the person sets their own."""
     import secrets as _secrets
@@ -368,11 +390,12 @@ def _create_invited_user(db: Session, email: str, display_name: str, role: str) 
         email=email,
         display_name=display_name.strip() or email.split("@")[0],
         password_hash=hash_password(_secrets.token_urlsafe(24)),
+        phone=phone,
         role=role,
     )
     db.add(user)
     db.flush()
-    raw, token_hash, expires = make_reset_token()
+    raw, token_hash, expires = make_reset_token(INVITE_TTL)
     db.add(PasswordReset(user_id=user.id, token_hash=token_hash, expires_at=expires))
     db.commit()
     return user, f"{APP_ORIGIN}/reset-password?token={raw}"
@@ -411,11 +434,13 @@ def approve_request(request_id: str, tasks: BackgroundTasks, _: User = Depends(a
         db.delete(req)
         db.commit()
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with that email already exists")
-    user, link = _create_invited_user(db, req.email, req.display_name, "shooter")
+    req_phone = req.phone if req.phone and not db.scalar(select(User).where(User.phone == req.phone)) else ""
+    user, link = _create_invited_user(db, req.email, req.display_name, "shooter", req_phone)
     db.delete(req)
     db.commit()
-    tasks.add_task(emailer.send_reset_email, user.email, link)
-    return InviteOut(user=to_out(user), invite_link=link)
+    tasks.add_task(emailer.send_reset_email, user.email, link, settings_mod.smtp_cfg(db))
+    sms_sent = _sms_invite(db, req_phone, link) if req_phone else False
+    return InviteOut(user=to_out(user), invite_link=link, sms_sent=sms_sent)
 
 
 @app.delete("/api/admin/requests/{request_id}")
@@ -433,8 +458,16 @@ class SettingsOut(BaseModel):
     phone_verification: str
     twilio_account_sid: str
     twilio_verify_sid: str
+    twilio_sms_from: str
     twilio_auth_token_set: bool
     twilio_configured: bool
+    sms_sender_configured: bool
+    smtp_host: str
+    smtp_port: str
+    smtp_user: str
+    smtp_from: str
+    smtp_password_set: bool
+    email_configured: bool
 
 
 class SettingsPatch(BaseModel):
@@ -443,6 +476,12 @@ class SettingsPatch(BaseModel):
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
     twilio_verify_sid: str | None = None
+    twilio_sms_from: str | None = None
+    smtp_host: str | None = None
+    smtp_port: str | None = None
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str | None = None
 
 
 def _settings_out(db: Session) -> SettingsOut:
@@ -487,8 +526,16 @@ def _settings_out(db: Session) -> SettingsOut:
         phone_verification="required" if settings_mod.verification_required(db) else "off",
         twilio_account_sid=settings_mod.get_setting(db, "twilio_account_sid"),
         twilio_verify_sid=settings_mod.get_setting(db, "twilio_verify_sid"),
+        twilio_sms_from=settings_mod.get_setting(db, "twilio_sms_from"),
         twilio_auth_token_set=bool(settings_mod.get_setting(db, "twilio_auth_token")),
         twilio_configured=settings_mod.twilio_cfg(db) is not None,
+        sms_sender_configured=settings_mod.messaging_cfg(db) is not None,
+        smtp_host=settings_mod.get_setting(db, "smtp_host"),
+        smtp_port=settings_mod.get_setting(db, "smtp_port"),
+        smtp_user=settings_mod.get_setting(db, "smtp_user"),
+        smtp_from=settings_mod.get_setting(db, "smtp_from"),
+        smtp_password_set=bool(settings_mod.get_setting(db, "smtp_password")),
+        email_configured=settings_mod.smtp_cfg(db) is not None,
     )
 
 
@@ -514,6 +561,14 @@ def patch_settings(body: SettingsPatch, _: User = Depends(admin_user), db: Sessi
         settings_mod.set_setting(db, "twilio_auth_token", body.twilio_auth_token)
     if body.twilio_verify_sid is not None:
         settings_mod.set_setting(db, "twilio_verify_sid", body.twilio_verify_sid)
+    if body.twilio_sms_from is not None:
+        settings_mod.set_setting(db, "twilio_sms_from", body.twilio_sms_from)
+    if body.smtp_port is not None and body.smtp_port.strip() and not body.smtp_port.strip().isdigit():
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "SMTP port must be a number")
+    for k in ("smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_from"):
+        v = getattr(body, k)
+        if v is not None:
+            settings_mod.set_setting(db, k, v)
     db.commit()
     return _settings_out(db)
 
@@ -525,9 +580,17 @@ def admin_create_user(body: AdminCreateIn, tasks: BackgroundTasks, _: User = Dep
     email = body.email.lower()
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with that email already exists")
-    user, link = _create_invited_user(db, email, body.display_name, body.role)
-    tasks.add_task(emailer.send_reset_email, user.email, link)
-    return InviteOut(user=to_out(user), invite_link=link)
+    normalized = ""
+    if body.phone.strip():
+        normalized = phone_mod.normalize_phone(body.phone) or ""
+        if not normalized:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Enter a valid phone number")
+        if db.scalar(select(User).where(User.phone == normalized)):
+            raise HTTPException(status.HTTP_409_CONFLICT, "An account already uses that phone number")
+    user, link = _create_invited_user(db, email, body.display_name, body.role, normalized)
+    tasks.add_task(emailer.send_reset_email, user.email, link, settings_mod.smtp_cfg(db))
+    sms_sent = _sms_invite(db, normalized, link) if normalized else False
+    return InviteOut(user=to_out(user), invite_link=link, sms_sent=sms_sent)
 
 
 @app.patch("/api/admin/users/{user_id}", response_model=UserOut)

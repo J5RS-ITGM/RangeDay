@@ -28,6 +28,8 @@ export function UserAdmin() {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [invEmail, setInvEmail] = useState('');
   const [invName, setInvName] = useState('');
+  const [invPhone, setInvPhone] = useState('');
+  const [inviteSms, setInviteSms] = useState(false);
   const [invRole, setInvRole] = useState<AppRole>('shooter');
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [requests, setRequests] = useState<AccountRequestRow[]>([]);
@@ -36,6 +38,12 @@ export function UserAdmin() {
   const [twSid, setTwSid] = useState('');
   const [twToken, setTwToken] = useState('');
   const [twVerify, setTwVerify] = useState('');
+  const [twFrom, setTwFrom] = useState('');
+  const [smHost, setSmHost] = useState('');
+  const [smPort, setSmPort] = useState('587');
+  const [smUser, setSmUser] = useState('');
+  const [smPass, setSmPass] = useState('');
+  const [smFrom, setSmFrom] = useState('');
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -50,6 +58,8 @@ export function UserAdmin() {
       setSettings(st);
       setTwSid(st.twilio_account_sid);
       setTwVerify(st.twilio_verify_sid);
+      setTwFrom(st.twilio_sms_from);
+      setSmHost(st.smtp_host); setSmPort(st.smtp_port); setSmUser(st.smtp_user); setSmFrom(st.smtp_from);
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Failed to load accounts');
     }
@@ -80,10 +90,11 @@ export function UserAdmin() {
     if (!invEmail.trim()) { toast('Enter an email for the invite'); return; }
     setBusy(true);
     try {
-      const r = await api.adminCreateUser(token, { email: invEmail.trim(), display_name: invName.trim(), role: invRole });
+      const r = await api.adminCreateUser(token, { email: invEmail.trim(), display_name: invName.trim(), role: invRole, phone: invPhone.trim() });
       setInviteLink(r.invite_link);
-      setInvEmail(''); setInvName('');
-      toast('Account created — share the invite link');
+      setInviteSms(r.sms_sent);
+      setInvEmail(''); setInvName(''); setInvPhone('');
+      toast(r.sms_sent ? 'Invite sent by text' : 'Account created — share the invite link');
       await load();
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Invite failed');
@@ -97,7 +108,10 @@ export function UserAdmin() {
       setSettings(st);
       setTwSid(st.twilio_account_sid);
       setTwVerify(st.twilio_verify_sid);
+      setTwFrom(st.twilio_sms_from);
       setTwToken('');
+      setSmHost(st.smtp_host); setSmPort(st.smtp_port); setSmUser(st.smtp_user); setSmFrom(st.smtp_from);
+      setSmPass('');
     }, msg);
 
   return (
@@ -132,17 +146,47 @@ export function UserAdmin() {
             autoCapitalize="none"
           />
           <Field label="Twilio Verify Service SID" value={twVerify} onChangeText={setTwVerify} placeholder="VA…" autoCapitalize="none" />
+          <Field label="SMS sender — Twilio number or Messaging Service SID (for texted invites)" value={twFrom} onChangeText={setTwFrom} placeholder="+18885551234 or MG…" autoCapitalize="none" />
+          <Muted style={{ fontSize: 11, marginBottom: 10 }}>
+            {settings.sms_sender_configured
+              ? '✓ SMS sender set — invites with a phone number are texted automatically.'
+              : 'Texted invites need a Twilio number you own (toll-free is easiest; it must pass toll-free verification before carriers deliver). Verification codes work without this.'}
+          </Muted>
+          <SubTitle style={{ marginTop: 14 }}>Email (SMTP)</SubTitle>
+          <Muted style={{ fontSize: 11, marginBottom: 10 }}>
+            {settings.email_configured
+              ? '✓ Email connected — reset links and invites are emailed.'
+              : 'Email not configured — links print to the API logs. Any SMTP provider works (Brevo free tier: host smtp-relay.brevo.com, port 587, your SMTP login + key).'}
+          </Muted>
+          <Field label="SMTP host" value={smHost} onChangeText={setSmHost} placeholder="smtp-relay.brevo.com" autoCapitalize="none" />
+          <Field label="SMTP port" value={smPort} onChangeText={setSmPort} placeholder="587" keyboardType="number-pad" />
+          <Field label="SMTP login" value={smUser} onChangeText={setSmUser} placeholder="you@smtp-brevo.com" autoCapitalize="none" />
+          <Field
+            label={settings.smtp_password_set ? 'SMTP password / key (saved — enter to replace)' : 'SMTP password / key'}
+            value={smPass}
+            onChangeText={setSmPass}
+            placeholder={settings.smtp_password_set ? '••••••••' : 'SMTP key'}
+            secureTextEntry
+            autoCapitalize="none"
+          />
+          <Field label="From address" value={smFrom} onChangeText={setSmFrom} placeholder="noreply@jwbegroup.com" autoCapitalize="none" keyboardType="email-address" />
           <View style={{ flexDirection: 'row', gap: 6 }}>
             <Pill
-              title="Save Twilio settings"
+              title="Save messaging settings"
               onPress={() =>
                 patchSettings(
                   {
                     twilio_account_sid: twSid.trim(),
                     twilio_verify_sid: twVerify.trim(),
+                    twilio_sms_from: twFrom.trim(),
+                    smtp_host: smHost.trim(),
+                    smtp_port: smPort.trim(),
+                    smtp_user: smUser.trim(),
+                    smtp_from: smFrom.trim(),
                     ...(twToken.trim() ? { twilio_auth_token: twToken.trim() } : {}),
+                    ...(smPass.trim() ? { smtp_password: smPass.trim() } : {}),
                   },
-                  'Twilio settings saved',
+                  'Settings saved',
                 )
               }
             />
@@ -151,8 +195,8 @@ export function UserAdmin() {
               quiet
               onPress={() =>
                 patchSettings(
-                  { twilio_account_sid: '', twilio_auth_token: '', twilio_verify_sid: '' },
-                  'Twilio credentials cleared — back to log codes',
+                  { twilio_account_sid: '', twilio_auth_token: '', twilio_verify_sid: '', twilio_sms_from: '', smtp_host: '', smtp_user: '', smtp_password: '', smtp_from: '' },
+                  'Messaging credentials cleared — back to log mode',
                 )
               }
             />
@@ -193,13 +237,18 @@ export function UserAdmin() {
       <Card>
         <Field label="Email" value={invEmail} onChangeText={setInvEmail} placeholder="them@example.com" autoCapitalize="none" keyboardType="email-address" />
         <Field label="Name (optional)" value={invName} onChangeText={setInvName} />
+        <Field label="Mobile phone (optional — invite is texted when an SMS sender is set up)" value={invPhone} onChangeText={setInvPhone} placeholder="(630) 555-0123" keyboardType="phone-pad" />
         <Choice<AppRole> label="Role" options={ROLES} value={invRole} onChange={setInvRole} />
         <Pill title={busy ? 'Working…' : 'Create invite'} onPress={createInvite} style={{ alignSelf: 'flex-start' }} />
         {inviteLink ? (
           <View style={{ marginTop: 12 }}>
-            <Muted style={{ fontSize: 11, marginBottom: 4 }}>
-              One-time link, expires in 30 minutes — they open it and set their own password. It's also emailed if SMTP is configured (otherwise it appears in the API logs).
-            </Muted>
+            {inviteSms ? (
+              <Muted style={{ fontSize: 11, marginBottom: 4 }}>✓ Texted to their phone. Link below as backup:</Muted>
+            ) : (
+              <Muted style={{ fontSize: 11, marginBottom: 4 }}>
+                One-time link, expires in 24 hours — they open it and set their own password. It's also emailed if SMTP is configured (otherwise it appears in the API logs).
+              </Muted>
+            )}
             <Text selectable style={{ fontSize: 12, color: theme.accent, fontWeight: '700' }}>{inviteLink}</Text>
           </View>
         ) : null}

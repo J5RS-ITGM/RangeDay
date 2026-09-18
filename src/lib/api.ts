@@ -74,8 +74,16 @@ export interface AppSettings {
   phone_verification: 'required' | 'off';
   twilio_account_sid: string;
   twilio_verify_sid: string;
+  twilio_sms_from: string;
   twilio_auth_token_set: boolean;
   twilio_configured: boolean;
+  sms_sender_configured: boolean;
+  smtp_host: string;
+  smtp_port: string;
+  smtp_user: string;
+  smtp_from: string;
+  smtp_password_set: boolean;
+  email_configured: boolean;
 }
 
 export interface AccountRequestRow {
@@ -119,14 +127,14 @@ export const api = {
     request<AppUser>(`/admin/users/${id}`, { method: 'PATCH', body: patch, token }),
   adminDeleteUser: (token: string, id: string) =>
     request<{ ok: boolean }>(`/admin/users/${id}`, { method: 'DELETE', token }),
-  adminCreateUser: (token: string, body: { email: string; display_name: string; role: AppRole }) =>
-    request<{ user: AppUser; invite_link: string }>('/admin/users', { method: 'POST', body, token }),
+  adminCreateUser: (token: string, body: { email: string; display_name: string; role: AppRole; phone?: string }) =>
+    request<{ user: AppUser; invite_link: string; sms_sent: boolean }>('/admin/users', { method: 'POST', body, token }),
   adminListRequests: (token: string) => request<AccountRequestRow[]>('/admin/requests', { token }),
   adminGetSettings: (token: string) => request<AppSettings>('/admin/settings', { token }),
-  adminPatchSettings: (token: string, patch: Partial<Record<'signup_mode' | 'phone_verification' | 'twilio_account_sid' | 'twilio_auth_token' | 'twilio_verify_sid', string>>) =>
+  adminPatchSettings: (token: string, patch: Partial<Record<'signup_mode' | 'phone_verification' | 'twilio_account_sid' | 'twilio_auth_token' | 'twilio_verify_sid' | 'twilio_sms_from' | 'smtp_host' | 'smtp_port' | 'smtp_user' | 'smtp_password' | 'smtp_from', string>>) =>
     request<AppSettings>('/admin/settings', { method: 'PATCH', body: patch, token }),
   adminApproveRequest: (token: string, id: string) =>
-    request<{ user: AppUser; invite_link: string }>(`/admin/requests/${id}/approve`, { method: 'POST', token }),
+    request<{ user: AppUser; invite_link: string; sms_sent: boolean }>(`/admin/requests/${id}/approve`, { method: 'POST', token }),
   adminRejectRequest: (token: string, id: string) =>
     request<{ ok: boolean }>(`/admin/requests/${id}`, { method: 'DELETE', token }),
 };

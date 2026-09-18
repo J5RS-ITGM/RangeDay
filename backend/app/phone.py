@@ -71,3 +71,27 @@ def check_with_twilio(phone: str, code: str, creds: TwilioCreds) -> bool:
 
 def dev_code_hash(phone: str, code: str) -> str:
     return hashlib.sha256(f"{phone}:{code}".encode()).hexdigest()
+
+
+def send_sms(to: str, body: str, cfg: tuple[str, str, str] | None) -> bool:
+    """Send a plain SMS via the Messages API. cfg = (account_sid,
+    auth_token, sender) where sender is a phone number or a Messaging
+    Service SID (MG...). Returns True when handed to Twilio; False when
+    unconfigured (body is logged instead, for dev/testing)."""
+    if not cfg:
+        log.warning("SMS sender not configured — would text %s: %s", to, body)
+        return False
+    sid, token, sender = cfg
+    data = {"To": to, "Body": body}
+    if sender.startswith("MG"):
+        data["MessagingServiceSid"] = sender
+    else:
+        data["From"] = sender
+    r = http.post(
+        f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json",
+        auth=(sid, token),
+        data=data,
+        timeout=15,
+    )
+    r.raise_for_status()
+    return True

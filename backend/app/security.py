@@ -15,6 +15,7 @@ if not SECRET_KEY:
 JWT_ALG = "HS256"
 ACCESS_TTL = timedelta(days=7)
 RESET_TTL = timedelta(minutes=30)
+INVITE_TTL = timedelta(hours=24)
 PHONE_TTL = timedelta(minutes=15)
 
 
@@ -57,10 +58,10 @@ def read_phone_token(token: str) -> str | None:
         return None
 
 
-def make_reset_token() -> tuple[str, str, datetime]:
+def make_reset_token(ttl: timedelta = RESET_TTL) -> tuple[str, str, datetime]:
     """Returns (raw token for the email link, sha256 hash for storage, expiry)."""
     raw = secrets.token_urlsafe(32)
-    return raw, hashlib.sha256(raw.encode()).hexdigest(), datetime.now(timezone.utc) + RESET_TTL
+    return raw, hashlib.sha256(raw.encode()).hexdigest(), datetime.now(timezone.utc) + ttl
 
 
 def hash_reset_token(raw: str) -> str:
