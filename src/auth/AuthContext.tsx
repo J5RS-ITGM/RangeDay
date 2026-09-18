@@ -19,7 +19,7 @@ interface AuthValue {
   appUser: AppUser | null;
   isAdmin: boolean;
   signIn: (email: string, password: string) => Promise<string | null>;
-  signUp: (email: string, password: string, displayName: string) => Promise<string | null>;
+  signUp: (email: string, password: string, displayName: string, phone?: string, verificationToken?: string) => Promise<string | null>;
   signOut: () => Promise<void>;
   requestPasswordReset: (email: string) => Promise<string | null>;
   resetPassword: (token: string, newPassword: string) => Promise<string | null>;
@@ -78,9 +78,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return null;
         } catch (e) { return errMsg(e); }
       },
-      signUp: async (email, password, displayName) => {
+      signUp: async (email, password, displayName, phone = '', verificationToken = '') => {
         try {
-          const r = await api.signup(email, password, displayName);
+          const r = await api.signup(email, password, displayName, phone, verificationToken);
           await acceptAuth(r.access_token, r.user);
           return null;
         } catch (e) { return errMsg(e); }

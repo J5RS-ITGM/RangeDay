@@ -15,6 +15,7 @@ if not SECRET_KEY:
 JWT_ALG = "HS256"
 ACCESS_TTL = timedelta(days=7)
 RESET_TTL = timedelta(minutes=30)
+PHONE_TTL = timedelta(minutes=15)
 
 
 def hash_password(password: str) -> str:
@@ -36,6 +37,22 @@ def make_access_token(user_id: str) -> str:
 def read_access_token(token: str) -> str | None:
     try:
         return jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALG])["sub"]
+    except jwt.PyJWTError:
+        return None
+
+
+def make_phone_token(phone: str) -> str:
+    now = datetime.now(timezone.utc)
+    return jwt.encode(
+        {"phone": phone, "purpose": "phone", "iat": now, "exp": now + PHONE_TTL},
+        SECRET_KEY, algorithm=JWT_ALG,
+    )
+
+
+def read_phone_token(token: str) -> str | None:
+    try:
+        data = jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALG])
+        return data["phone"] if data.get("purpose") == "phone" else None
     except jwt.PyJWTError:
         return None
 

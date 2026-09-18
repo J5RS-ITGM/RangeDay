@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,15 +9,17 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import emailer
+from . import emailer, phone as phone_mod
 from .db import Base, engine, get_db
-from .models import ROLES, AccountRequest, PasswordReset, User
+from .models import ROLES, AccountRequest, PasswordReset, PhoneCode, User
 from .security import (
     hash_password,
     hash_reset_token,
     make_access_token,
+    make_phone_token,
     make_reset_token,
     read_access_token,
+    read_phone_token,
     verify_password,
 )
 
@@ -56,6 +58,22 @@ class SignupIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=200)
     display_name: str = Field(default="", max_length=120)
+    phone: str = Field(default="", max_length=25)
+    verification_token: str = Field(default="", max_length=1000)
+
+
+class VerifyStartIn(BaseModel):
+    phone: str = Field(max_length=25)
+
+
+class VerifyCheckIn(BaseModel):
+    phone: str = Field(max_length=25)
+    code: str = Field(min_length=4, max_length=10)
+
+
+class ResetByPhoneIn(BaseModel):
+    verification_token: str = Field(max_length=1000)
+    new_password: str = Field(min_length=8, max_length=200)
 
 
 class LoginIn(BaseModel):
@@ -75,6 +93,7 @@ class ResetIn(BaseModel):
 class RequestAccountIn(BaseModel):
     email: EmailStr
     display_name: str = Field(default="", max_length=120)
+    phone: str = Field(default="", max_length=25)
     note: str = Field(default="", max_length=500)
 
 
@@ -82,6 +101,7 @@ class AccountRequestOut(BaseModel):
     id: str
     email: str
     display_name: str
+    phone: str
     note: str
     created_at: datetime
 
@@ -147,7 +167,63 @@ def admin_user(user: User = Depends(current_user)) -> User:
 def config(db: Session = Depends(get_db)):
     # First-run is always open so the bootstrap admin can be created.
     first = db.scalar(select(User).limit(1)) is None
-    return {"signup_open": SIGNUP_MODE == "open" or first}
+    return {
+        "signup_open": SIGNUP_MODE == "open" or first,
+        "phone_verification": phone_mod.verification_required and not first,
+    }
+
+
+@app.post("/api/auth/verify/start")
+def verify_start(body: VerifyStartIn, db: Session = Depends(get_db)):
+    normalized = phone_mod.normalize_phone(body.phone)
+    if not normalized:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Enter a valid phone number")
+    dev_hash = phone_mod.start_verification(normalized)
+    if dev_hash is not None:  # Twilio absent: store the logged dev code
+        row = db.get(PhoneCode, normalized)
+        expires = datetime.now(timezone.utc) + timedelta(minutes=10)
+        if row:
+            row.code_hash, row.expires_at, row.attempts = dev_hash, expires, 0
+        else:
+            db.add(PhoneCode(phone=normalized, code_hash=dev_hash, expires_at=expires, attempts=0))
+        db.commit()
+    return {"ok": True, "phone": normalized}
+
+
+@app.post("/api/auth/verify/check")
+def verify_check(body: VerifyCheckIn, db: Session = Depends(get_db)):
+    normalized = phone_mod.normalize_phone(body.phone)
+    if not normalized:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Enter a valid phone number")
+    if phone_mod.twilio_configured:
+        ok = phone_mod.check_with_twilio(normalized, body.code.strip())
+    else:
+        row = db.get(PhoneCode, normalized)
+        expired = bool(row) and row.expires_at.replace(tzinfo=row.expires_at.tzinfo or timezone.utc) < datetime.now(timezone.utc)
+        if not row or expired or row.attempts >= 5:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Code expired - request a new one")
+        row.attempts += 1
+        ok = row.code_hash == phone_mod.dev_code_hash(normalized, body.code.strip())
+        if ok:
+            db.delete(row)
+        db.commit()
+    if not ok:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "That code is not right - check and try again")
+    return {"verification_token": make_phone_token(normalized)}
+
+
+@app.post("/api/auth/reset-by-phone")
+def reset_by_phone(body: ResetByPhoneIn, db: Session = Depends(get_db)):
+    # SMS reset: a fresh phone token proves control of the number.
+    normalized = read_phone_token(body.verification_token)
+    if not normalized:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Verification expired - start over")
+    user = db.scalar(select(User).where(User.phone == normalized))
+    if not user or user.disabled:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No account uses that phone number")
+    user.password_hash = hash_password(body.new_password)
+    db.commit()
+    return {"ok": True}
 
 
 @app.post("/api/auth/signup", response_model=AuthOut)
@@ -158,14 +234,24 @@ def signup(body: SignupIn, db: Session = Depends(get_db)):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Registration is closed — ask an admin for an invite")
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with that email already exists")
+
+    normalized = ""
+    if phone_mod.verification_required and not first_check:
+        normalized = phone_mod.normalize_phone(body.phone) or ""
+        token_phone = read_phone_token(body.verification_token)
+        if not normalized or token_phone != normalized:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Verify your phone number first")
+        if db.scalar(select(User).where(User.phone == normalized)):
+            raise HTTPException(status.HTTP_409_CONFLICT, "An account already uses that phone number")
+
     # Bootstrap: the very first account becomes admin so the panel is
     # reachable without any out-of-band database surgery.
-    first = db.scalar(select(User).limit(1)) is None
     user = User(
         email=email,
         display_name=body.display_name.strip() or email.split("@")[0],
         password_hash=hash_password(body.password),
-        role="admin" if first else "shooter",
+        phone=normalized,
+        role="admin" if first_check else "shooter",
     )
     db.add(user)
     db.commit()
@@ -256,7 +342,8 @@ def request_account(body: RequestAccountIn, db: Session = Depends(get_db)):
             existing.display_name = body.display_name.strip() or existing.display_name
             existing.note = body.note.strip() or existing.note
         else:
-            db.add(AccountRequest(email=email, display_name=body.display_name.strip(), note=body.note.strip()))
+            req_phone = phone_mod.normalize_phone(body.phone) if body.phone.strip() else None
+            db.add(AccountRequest(email=email, display_name=body.display_name.strip(), phone=req_phone or "", note=body.note.strip()))
         db.commit()
     return {"ok": True}
 
@@ -264,7 +351,7 @@ def request_account(body: RequestAccountIn, db: Session = Depends(get_db)):
 @app.get("/api/admin/requests", response_model=list[AccountRequestOut])
 def list_requests(_: User = Depends(admin_user), db: Session = Depends(get_db)):
     rows = db.scalars(select(AccountRequest).order_by(AccountRequest.created_at)).all()
-    return [AccountRequestOut(id=r.id, email=r.email, display_name=r.display_name, note=r.note, created_at=r.created_at) for r in rows]
+    return [AccountRequestOut(id=r.id, email=r.email, display_name=r.display_name, phone=r.phone, note=r.note, created_at=r.created_at) for r in rows]
 
 
 @app.post("/api/admin/requests/{request_id}/approve", response_model=InviteOut)

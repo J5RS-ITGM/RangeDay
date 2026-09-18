@@ -72,16 +72,32 @@ export interface AccountRequestRow {
   id: string;
   email: string;
   display_name: string;
+  phone: string;
   note: string;
   created_at: string;
 }
 
 export const api = {
-  config: () => request<{ signup_open: boolean }>('/config'),
-  requestAccount: (email: string, displayName: string, note: string) =>
-    request<{ ok: boolean }>('/auth/request-account', { method: 'POST', body: { email, display_name: displayName, note } }),
-  signup: (email: string, password: string, displayName: string) =>
-    request<AuthResponse>('/auth/signup', { method: 'POST', body: { email, password, display_name: displayName } }),
+  config: () => request<{ signup_open: boolean; phone_verification: boolean }>('/config'),
+  requestAccount: (email: string, displayName: string, note: string, phone = '') =>
+    request<{ ok: boolean }>('/auth/request-account', {
+      method: 'POST',
+      body: { email, display_name: displayName, note, phone },
+    }),
+  signup: (email: string, password: string, displayName: string, phone = '', verificationToken = '') =>
+    request<AuthResponse>('/auth/signup', {
+      method: 'POST',
+      body: { email, password, display_name: displayName, phone, verification_token: verificationToken },
+    }),
+  verifyStart: (phone: string) =>
+    request<{ ok: boolean; phone: string }>('/auth/verify/start', { method: 'POST', body: { phone } }),
+  verifyCheck: (phone: string, code: string) =>
+    request<{ verification_token: string }>('/auth/verify/check', { method: 'POST', body: { phone, code } }),
+  resetByPhone: (verificationToken: string, newPassword: string) =>
+    request<{ ok: boolean }>('/auth/reset-by-phone', {
+      method: 'POST',
+      body: { verification_token: verificationToken, new_password: newPassword },
+    }),
   login: (email: string, password: string) =>
     request<AuthResponse>('/auth/login', { method: 'POST', body: { email, password } }),
   me: (token: string) => request<AppUser>('/auth/me', { token }),

@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { GestureResponderEvent, LayoutChangeEvent, StyleSheet, View } from 'react-native';
+import { GestureResponderEvent, LayoutChangeEvent, Pressable, StyleSheet, View } from 'react-native';
 import Svg, {
   Defs,
   G,
@@ -13,6 +13,7 @@ import Svg, {
 import { useTheme } from '@/theme/ThemeContext';
 import { RADII } from '@/theme/tokens';
 import { Hit, Zone } from '@/store/types';
+import { classifyHit } from '@/lib/targetGeometry';
 
 /**
  * USPSA target rendered from Eric's supplied SVG (USPSA_Target.svg,
@@ -35,9 +36,6 @@ const OUTER_BOUNDARY =
   'M188 6.5H258.5Q266.5 6.5 266.5 14.5V92H320.5L353 124.5V354.5L309 440.5H137.5L94 354.5V125L125.5 92H180V14.5Q180 6.5 188 6.5Z';
 const C_BODY_OPEN =
   'M179 93.5L142 115.5Q137.5 118 137.5 125V284.5Q137.5 289 139.5 293.5L167.5 354H280.5L307.5 293.5Q309.5 289 309.5 284.5V125Q309.5 119 305 116L268 93.5';
-const C_BODY_CLOSED = C_BODY_OPEN + 'Z';
-// Head portion of the scoring area (down to the neck line), for C hit-testing
-const HEAD_REGION = 'M188 6.5H258.5Q266.5 6.5 266.5 14.5V92H180V14.5Q180 6.5 188 6.5Z';
 const HEAD_A = { x: 194, y: 20.5, w: 59, h: 31, rx: 7 };
 const BODY_A = { x: 180, y: 122, w: 86.5, h: 162.5, rx: 8.5 };
 
@@ -56,30 +54,57 @@ export function Target({ hits, onHit, onRemove }: Props) {
     setSize({ w: width, h: height });
   }, []);
 
-  const toTarget = useCallback(
+  /**
+   * Stage-relative tap coordinates, cross-platform. Native populates
+   * locationX/Y; react-native-web mouse events populate offsetX/Y; web
+   * touch events need clientX against the element rect. NaN coords were
+   * exactly the bug that made markers invisible on web.
+   */
+  const stageXY = useCallback((e: GestureResponderEvent): { lx: number; ly: number } | null => {
+    const ne = e.nativeEvent as unknown as Record<string, unknown>;
+    if (typeof ne.locationX === 'number' && Number.isFinite(ne.locationX)) {
+      return { lx: ne.locationX as number, ly: ne.locationY as number };
+    }
+    if (typeof ne.offsetX === 'number' && Number.isFinite(ne.offsetX)) {
+      return { lx: ne.offsetX as number, ly: ne.offsetY as number };
+    }
+    const touch = (ne.changedTouches as { clientX: number; clientY: number }[] | undefined)?.[0];
+    const el = (e.currentTarget as unknown as { getBoundingClientRect?: () => DOMRect })
+      ?.getBoundingClientRect?.();
+    if (touch && el) return { lx: touch.clientX - el.left, ly: touch.clientY - el.top };
+    return null;
+  }, []);
+
+  const onStagePress = useCallback(
     (e: GestureResponderEvent) => {
-      if (!size.w || !size.h) return null;
+      const pt = stageXY(e);
+      if (!pt || !size.w || !size.h) return;
       // preserveAspectRatio="xMidYMid meet": uniform scale, centered
       const scale = Math.min(size.w / TARGET_W, size.h / TARGET_H);
       const offX = (size.w - TARGET_W * scale) / 2;
       const offY = (size.h - TARGET_H * scale) / 2;
-      const { locationX, locationY } = e.nativeEvent;
-      return { x: VIEW_X + (locationX - offX) / scale, y: (locationY - offY) / scale };
+      const x = VIEW_X + (pt.lx - offX) / scale;
+      const y = (pt.ly - offY) / scale;
+
+      // Tapping an existing marker removes it (12-unit touch radius)
+      for (let i = hits.length - 1; i >= 0; i--) {
+        const h = hits[i];
+        if (h.x !== null && h.y !== null && (h.x - x) ** 2 + (h.y - y) ** 2 <= 12 ** 2) {
+          onRemove(i);
+          return;
+        }
+      }
+      const zone = classifyHit(x, y);
+      if (zone) onHit(zone, x, y);
     },
-    [size],
+    [stageXY, size, hits, onHit, onRemove],
   );
 
-  const press = (zone: Zone) => (e: GestureResponderEvent) => {
-    const p = toTarget(e);
-    if (p) onHit(zone, p.x, p.y);
-  };
-
   const dot: Record<Zone, string> = { A: theme.alpha, C: theme.charlie, D: theme.delta, miss: theme.miss };
-  const hitFill = 'rgba(0,0,0,0.01)'; // effectively invisible, still pressable
 
   return (
     <View style={[styles.wrap, { backgroundColor: theme.surface, borderColor: theme.line }]}>
-      <View style={styles.stage} onLayout={onLayout}>
+      <Pressable style={styles.stage} onLayout={onLayout} onPress={onStagePress}>
         <Svg
           width="100%"
           height="100%"
@@ -118,18 +143,10 @@ export function Target({ hits, onHit, onRemove }: Props) {
             <SvgText x={335} y={226}>D</SvgText>
           </G>
 
-          {/* --- tap regions, bottom to top; topmost under the finger wins --- */}
-          <Path d={OUTLINE} fill={hitFill} onPress={press('miss')} />
-          <Path d={OUTER_BOUNDARY} fill={hitFill} onPress={press('D')} />
-          <Path d={HEAD_REGION} fill={hitFill} onPress={press('C')} />
-          <Path d={C_BODY_CLOSED} fill={hitFill} onPress={press('C')} />
-          <Rect x={HEAD_A.x} y={HEAD_A.y} width={HEAD_A.w} height={HEAD_A.h} rx={HEAD_A.rx} fill={hitFill} onPress={press('A')} />
-          <Rect x={BODY_A.x} y={BODY_A.y} width={BODY_A.w} height={BODY_A.h} rx={BODY_A.rx} fill={hitFill} onPress={press('A')} />
-
-          {/* --- hit markers --- */}
+          {/* --- hit markers (tap handling lives on the stage Pressable) --- */}
           {hits.map((h, i) =>
             h.x === null || h.y === null ? null : (
-              <G key={i} onPress={() => onRemove(i)}>
+              <G key={i}>
                 <Circle cx={h.x} cy={h.y} r={10} fill={dot[h.zone]} stroke={theme.bg} strokeWidth={2} />
                 <SvgText x={h.x} y={h.y + 4} textAnchor="middle" fontSize={11} fontWeight="700" fill={theme.bg}>
                   {h.zone === 'miss' ? 'M' : h.zone}
@@ -138,7 +155,7 @@ export function Target({ hits, onHit, onRemove }: Props) {
             ),
           )}
         </Svg>
-      </View>
+      </Pressable>
     </View>
   );
 }

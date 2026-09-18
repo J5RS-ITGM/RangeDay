@@ -7,6 +7,7 @@ import { useToast } from '@/components/Toast';
 import { useTheme } from '@/theme/ThemeContext';
 import { FONTS, RADII } from '@/theme/tokens';
 import { api } from '@/lib/api';
+import { PhoneVerify } from '@/components/PhoneVerify';
 
 export default function Login() {
   const router = useRouter();
@@ -20,18 +21,24 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [signupOpen, setSignupOpen] = useState(true);
+  const [needsPhone, setNeedsPhone] = useState(false);
+  const [phone, setPhone] = useState('');
+  const [phoneToken, setPhoneToken] = useState('');
 
   useEffect(() => {
     if (!configured) return;
-    api.config().then((c) => setSignupOpen(c.signup_open)).catch(() => {});
+    api.config().then((c) => { setSignupOpen(c.signup_open); setNeedsPhone(c.phone_verification); }).catch(() => {});
   }, [configured]);
 
   const submit = async () => {
     setError(null);
     if (!email.trim() || !password) { setError('Enter your email and password'); return; }
     if (mode === 'signup' && password.length < 8) { setError('Password must be at least 8 characters'); return; }
+    if (mode === 'signup' && needsPhone && !phoneToken) { setError('Verify your phone number first'); return; }
     setBusy(true);
-    const e = mode === 'signin' ? await signIn(email, password) : await signUp(email, password, name || email.split('@')[0]);
+    const e = mode === 'signin'
+      ? await signIn(email, password)
+      : await signUp(email, password, name || email.split('@')[0], phone, phoneToken);
     setBusy(false);
     if (e) { setError(e); return; }
     if (mode === 'signup') toast('Account created — check your email if confirmation is required');
@@ -60,6 +67,9 @@ export default function Login() {
       {mode === 'signup' && <Field label="Name" value={name} onChangeText={setName} placeholder="Your name" autoCapitalize="words" />}
       <Field label="Email" value={email} onChangeText={setEmail} placeholder="you@example.com" autoCapitalize="none" keyboardType="email-address" autoComplete="email" />
       <Field label="Password" value={password} onChangeText={setPassword} placeholder={mode === 'signup' ? 'At least 8 characters' : 'Your password'} secureTextEntry autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} />
+      {mode === 'signup' && needsPhone && (
+        <PhoneVerify onVerified={(p, t) => { setPhone(p); setPhoneToken(t); }} />
+      )}
 
       {error ? <Text style={{ color: theme.miss, fontSize: 13, fontWeight: '600', marginBottom: 12 }}>{error}</Text> : null}
 

@@ -11,6 +11,7 @@ export default function RequestAccount() {
   const { theme } = useTheme();
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
@@ -21,7 +22,7 @@ export default function RequestAccount() {
     if (!email.trim()) { setError('Enter your email'); return; }
     setBusy(true);
     try {
-      await api.requestAccount(email, name, note);
+      await api.requestAccount(email, name, note, phone);
       setSent(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Request failed');
@@ -42,6 +43,7 @@ export default function RequestAccount() {
           <Hint>Registration is invite-only. Tell us who you are and an admin will review your request.</Hint>
           <Field label="Email" value={email} onChangeText={setEmail} placeholder="you@example.com" autoCapitalize="none" keyboardType="email-address" autoComplete="email" />
           <Field label="Name" value={name} onChangeText={setName} placeholder="Your name" autoCapitalize="words" />
+          <Field label="Mobile phone (optional)" value={phone} onChangeText={setPhone} placeholder="(630) 555-0123" keyboardType="phone-pad" autoComplete="tel" />
           <Field label="Note (optional)" value={note} onChangeText={setNote} multiline placeholder="Club, referral, why you'd like access…" />
           {error ? <Text style={{ color: theme.miss, fontSize: 13, fontWeight: '600', marginBottom: 12 }}>{error}</Text> : null}
           <Button title={busy ? 'Sending…' : 'Send request'} onPress={busy ? () => {} : submit} />

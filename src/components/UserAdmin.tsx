@@ -89,7 +89,7 @@ export function UserAdmin() {
               <Row style={{ alignItems: 'flex-start' }}>
                 <View style={{ flex: 1 }}>
                   <Strong style={{ fontSize: 14, fontWeight: '600' }}>{r.display_name || r.email}</Strong>
-                  <Muted style={{ fontSize: 11 }}>{r.email} · {new Date(r.created_at).toLocaleDateString()}</Muted>
+                  <Muted style={{ fontSize: 11 }}>{r.email}{r.phone ? ' · ' + r.phone : ''} · {new Date(r.created_at).toLocaleDateString()}</Muted>
                   {r.note ? <Muted style={{ fontSize: 12, marginTop: 4 }}>"{r.note}"</Muted> : null}
                 </View>
                 <View style={{ flexDirection: 'row', gap: 6 }}>
