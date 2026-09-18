@@ -9,9 +9,9 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import emailer, phone as phone_mod
+from . import emailer, phone as phone_mod, settings as settings_mod
 from .db import Base, engine, get_db
-from .models import ROLES, AccountRequest, PasswordReset, PhoneCode, User
+from .models import ROLES, AccountRequest, AppSetting, PasswordReset, PhoneCode, User
 from .security import (
     hash_password,
     hash_reset_token,
@@ -26,9 +26,37 @@ from .security import (
 logging.basicConfig(level=logging.INFO)
 
 APP_ORIGIN = os.environ.get("APP_ORIGIN", "https://range.jwbegroup.com")
-# "open": anyone can sign up (first account still becomes admin).
-# "closed": only admin-created accounts; signup returns 403.
-SIGNUP_MODE = os.environ.get("SIGNUP_MODE", "open").lower()
+# Admin-editable settings, stored in app_settings; the env var of the same
+# purpose is the fallback default when no DB value has been saved.
+SETTING_KEYS = ("signup_mode", "phone_verification", "twilio_account_sid", "twilio_auth_token", "twilio_verify_sid")
+_ENV_DEFAULTS = {
+    "signup_mode": os.environ.get("SIGNUP_MODE", "open").lower(),
+    "phone_verification": os.environ.get("PHONE_VERIFICATION", "off").lower(),
+    "twilio_account_sid": os.environ.get("TWILIO_ACCOUNT_SID", ""),
+    "twilio_auth_token": os.environ.get("TWILIO_AUTH_TOKEN", ""),
+    "twilio_verify_sid": os.environ.get("TWILIO_VERIFY_SID", ""),
+}
+
+
+def get_setting(db: Session, key: str) -> str:
+    row = db.get(AppSetting, key)
+    return row.value if row and row.value != "" else _ENV_DEFAULTS.get(key, "")
+
+
+def signup_mode(db: Session) -> str:
+    return get_setting(db, "signup_mode") or "open"
+
+
+def phone_verification_required(db: Session) -> bool:
+    return get_setting(db, "phone_verification") == "required"
+
+
+def twilio_creds(db: Session) -> phone_mod.TwilioCreds:
+    return phone_mod.TwilioCreds(
+        get_setting(db, "twilio_account_sid"),
+        get_setting(db, "twilio_auth_token"),
+        get_setting(db, "twilio_verify_sid"),
+    )
 
 app = FastAPI(title="Range Day API", docs_url=None, redoc_url=None)
 
@@ -170,8 +198,8 @@ def config(db: Session = Depends(get_db)):
     # First-run is always open so the bootstrap admin can be created.
     first = db.scalar(select(User).limit(1)) is None
     return {
-        "signup_open": SIGNUP_MODE == "open" or first,
-        "phone_verification": phone_mod.verification_required and not first,
+        "signup_open": signup_mode(db) == "open" or first,
+        "phone_verification": phone_verification_required(db) and not first,
     }
 
 
@@ -180,7 +208,7 @@ def verify_start(body: VerifyStartIn, db: Session = Depends(get_db)):
     normalized = phone_mod.normalize_phone(body.phone)
     if not normalized:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Enter a valid phone number")
-    dev_hash = phone_mod.start_verification(normalized)
+    dev_hash = phone_mod.start_verification(normalized, twilio_creds(db))
     if dev_hash is not None:  # Twilio absent: store the logged dev code
         row = db.get(PhoneCode, normalized)
         expires = datetime.now(timezone.utc) + timedelta(minutes=10)
@@ -197,8 +225,9 @@ def verify_check(body: VerifyCheckIn, db: Session = Depends(get_db)):
     normalized = phone_mod.normalize_phone(body.phone)
     if not normalized:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Enter a valid phone number")
-    if phone_mod.twilio_configured:
-        ok = phone_mod.check_with_twilio(normalized, body.code.strip())
+    creds = twilio_creds(db)
+    if creds.configured:
+        ok = phone_mod.check_with_twilio(normalized, body.code.strip(), creds)
     else:
         row = db.get(PhoneCode, normalized)
         expired = bool(row) and row.expires_at.replace(tzinfo=row.expires_at.tzinfo or timezone.utc) < datetime.now(timezone.utc)
@@ -232,13 +261,13 @@ def reset_by_phone(body: ResetByPhoneIn, db: Session = Depends(get_db)):
 def signup(body: SignupIn, db: Session = Depends(get_db)):
     email = body.email.lower()
     first_check = db.scalar(select(User).limit(1)) is None
-    if SIGNUP_MODE != "open" and not first_check:
+    if signup_mode(db) != "open" and not first_check:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Registration is closed — ask an admin for an invite")
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with that email already exists")
 
     normalized = ""
-    if phone_mod.verification_required and not first_check:
+    if phone_verification_required(db) and not first_check:
         normalized = phone_mod.normalize_phone(body.phone) or ""
         token_phone = read_phone_token(body.verification_token)
         if not normalized or token_phone != normalized:
@@ -307,6 +336,23 @@ def reset(body: ResetIn, db: Session = Depends(get_db)):
 @app.get("/api/admin/users", response_model=list[UserOut])
 def list_users(_: User = Depends(admin_user), db: Session = Depends(get_db)):
     return [to_out(u) for u in db.scalars(select(User).order_by(User.created_at)).all()]
+
+
+class SettingsOut(BaseModel):
+    signup_mode: str
+    phone_verification: str
+    twilio_account_sid: str
+    twilio_verify_sid: str
+    twilio_auth_token_set: bool
+    twilio_configured: bool
+
+
+class SettingsPatch(BaseModel):
+    signup_mode: str | None = None
+    phone_verification: str | None = None
+    twilio_account_sid: str | None = None
+    twilio_auth_token: str | None = None
+    twilio_verify_sid: str | None = None
 
 
 class InviteOut(BaseModel):
@@ -380,6 +426,96 @@ def reject_request(request_id: str, _: User = Depends(admin_user), db: Session =
     db.delete(req)
     db.commit()
     return {"ok": True}
+
+
+class SettingsOut(BaseModel):
+    signup_mode: str
+    phone_verification: str
+    twilio_account_sid: str
+    twilio_verify_sid: str
+    twilio_auth_token_set: bool
+    twilio_configured: bool
+
+
+class SettingsPatch(BaseModel):
+    signup_mode: str | None = None
+    phone_verification: str | None = None
+    twilio_account_sid: str | None = None
+    twilio_auth_token: str | None = None
+    twilio_verify_sid: str | None = None
+
+
+def _settings_out(db: Session) -> SettingsOut:
+    creds = twilio_creds(db)
+    return SettingsOut(
+        signup_mode=signup_mode(db),
+        phone_verification="required" if phone_verification_required(db) else "off",
+        twilio_account_sid=creds.account_sid,
+        twilio_verify_sid=creds.verify_sid,
+        twilio_auth_token_set=bool(creds.auth_token),
+        twilio_configured=creds.configured,
+    )
+
+
+@app.get("/api/admin/settings", response_model=SettingsOut)
+def get_settings(_: User = Depends(admin_user), db: Session = Depends(get_db)):
+    return _settings_out(db)
+
+
+@app.put("/api/admin/settings", response_model=SettingsOut)
+def put_settings(body: SettingsPatch, _: User = Depends(admin_user), db: Session = Depends(get_db)):
+    if body.signup_mode is not None and body.signup_mode not in ("open", "closed"):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "signup_mode must be open or closed")
+    if body.phone_verification is not None and body.phone_verification not in ("off", "required"):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "phone_verification must be off or required")
+    for key in SETTING_KEYS:
+        val = getattr(body, key, None)
+        if val is None:
+            continue  # not being changed
+        row = db.get(AppSetting, key)
+        if row:
+            row.value = val.strip()
+        else:
+            db.add(AppSetting(key=key, value=val.strip()))
+    db.commit()
+    return _settings_out(db)
+
+
+def _settings_out(db: Session) -> SettingsOut:
+    return SettingsOut(
+        signup_mode=settings_mod.signup_mode(db),
+        phone_verification="required" if settings_mod.verification_required(db) else "off",
+        twilio_account_sid=settings_mod.get_setting(db, "twilio_account_sid"),
+        twilio_verify_sid=settings_mod.get_setting(db, "twilio_verify_sid"),
+        twilio_auth_token_set=bool(settings_mod.get_setting(db, "twilio_auth_token")),
+        twilio_configured=settings_mod.twilio_cfg(db) is not None,
+    )
+
+
+@app.get("/api/admin/settings", response_model=SettingsOut)
+def get_settings(_: User = Depends(admin_user), db: Session = Depends(get_db)):
+    # The auth token itself is never returned - only whether one is saved.
+    return _settings_out(db)
+
+
+@app.patch("/api/admin/settings", response_model=SettingsOut)
+def patch_settings(body: SettingsPatch, _: User = Depends(admin_user), db: Session = Depends(get_db)):
+    if body.signup_mode is not None:
+        if body.signup_mode.lower() not in ("open", "closed"):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "signup_mode must be open or closed")
+        settings_mod.set_setting(db, "signup_mode", body.signup_mode.lower())
+    if body.phone_verification is not None:
+        if body.phone_verification.lower() not in ("required", "off"):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "phone_verification must be required or off")
+        settings_mod.set_setting(db, "phone_verification", body.phone_verification.lower())
+    if body.twilio_account_sid is not None:
+        settings_mod.set_setting(db, "twilio_account_sid", body.twilio_account_sid)
+    if body.twilio_auth_token is not None:
+        settings_mod.set_setting(db, "twilio_auth_token", body.twilio_auth_token)
+    if body.twilio_verify_sid is not None:
+        settings_mod.set_setting(db, "twilio_verify_sid", body.twilio_verify_sid)
+    db.commit()
+    return _settings_out(db)
 
 
 @app.post("/api/admin/users", response_model=InviteOut)

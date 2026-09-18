@@ -69,6 +69,15 @@ async function request<T>(
   return data as T;
 }
 
+export interface AppSettings {
+  signup_mode: 'open' | 'closed';
+  phone_verification: 'required' | 'off';
+  twilio_account_sid: string;
+  twilio_verify_sid: string;
+  twilio_auth_token_set: boolean;
+  twilio_configured: boolean;
+}
+
 export interface AccountRequestRow {
   id: string;
   email: string;
@@ -113,6 +122,9 @@ export const api = {
   adminCreateUser: (token: string, body: { email: string; display_name: string; role: AppRole }) =>
     request<{ user: AppUser; invite_link: string }>('/admin/users', { method: 'POST', body, token }),
   adminListRequests: (token: string) => request<AccountRequestRow[]>('/admin/requests', { token }),
+  adminGetSettings: (token: string) => request<AppSettings>('/admin/settings', { token }),
+  adminPatchSettings: (token: string, patch: Partial<Record<'signup_mode' | 'phone_verification' | 'twilio_account_sid' | 'twilio_auth_token' | 'twilio_verify_sid', string>>) =>
+    request<AppSettings>('/admin/settings', { method: 'PATCH', body: patch, token }),
   adminApproveRequest: (token: string, id: string) =>
     request<{ user: AppUser; invite_link: string }>(`/admin/requests/${id}/approve`, { method: 'POST', token }),
   adminRejectRequest: (token: string, id: string) =>

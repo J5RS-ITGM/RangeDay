@@ -41,6 +41,14 @@ class AccountRequest(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
 
 
+class AppSetting(Base):
+    """Admin-editable server settings. DB value overrides the env default."""
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+
+
 class PhoneCode(Base):
     """Dev-fallback verification codes (Twilio absent). 10 min, 5 attempts."""
     __tablename__ = "phone_codes"

@@ -16,15 +16,15 @@ import requests as http
 
 log = logging.getLogger("rangeday.phone")
 
-TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
-TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
-TWILIO_VERIFY_SID = os.environ.get("TWILIO_VERIFY_SID", "")
+class TwilioCreds:
+    def __init__(self, account_sid: str, auth_token: str, verify_sid: str):
+        self.account_sid = account_sid
+        self.auth_token = auth_token
+        self.verify_sid = verify_sid
 
-# "required" gates public signup behind a verified phone; anything else = off.
-PHONE_VERIFICATION = os.environ.get("PHONE_VERIFICATION", "off").lower()
-
-twilio_configured = bool(TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_VERIFY_SID)
-verification_required = PHONE_VERIFICATION == "required"
+    @property
+    def configured(self) -> bool:
+        return bool(self.account_sid and self.auth_token and self.verify_sid)
 
 _E164 = re.compile(r"^\+[1-9]\d{7,14}$")
 
@@ -39,13 +39,13 @@ def normalize_phone(raw: str) -> str | None:
     return p if _E164.fullmatch(p) else None
 
 
-def start_verification(phone: str) -> str | None:
+def start_verification(phone: str, creds: TwilioCreds) -> str | None:
     """Send a code. Returns a dev code hash to store when Twilio is absent,
     or None when Twilio handled delivery (nothing for us to store)."""
-    if twilio_configured:
+    if creds.configured:
         r = http.post(
-            f"https://verify.twilio.com/v2/Services/{TWILIO_VERIFY_SID}/Verifications",
-            auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+            f"https://verify.twilio.com/v2/Services/{creds.verify_sid}/Verifications",
+            auth=(creds.account_sid, creds.auth_token),
             data={"To": phone, "Channel": "sms"},
             timeout=15,
         )
@@ -56,10 +56,10 @@ def start_verification(phone: str) -> str | None:
     return hashlib.sha256(f"{phone}:{code}".encode()).hexdigest()
 
 
-def check_with_twilio(phone: str, code: str) -> bool:
+def check_with_twilio(phone: str, code: str, creds: TwilioCreds) -> bool:
     r = http.post(
-        f"https://verify.twilio.com/v2/Services/{TWILIO_VERIFY_SID}/VerificationCheck",
-        auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+        f"https://verify.twilio.com/v2/Services/{creds.verify_sid}/VerificationCheck",
+        auth=(creds.account_sid, creds.auth_token),
         data={"To": phone, "Code": code},
         timeout=15,
     )

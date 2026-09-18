@@ -3,7 +3,7 @@ import { Text, View } from 'react-native';
 import { useAuth } from '@/auth/AuthContext';
 import { useToast } from '@/components/Toast';
 import { Card, Choice, Empty, Field, Muted, Pill, Row, Strong, SubTitle } from '@/components/UI';
-import { AccountRequestRow, api, AppRole, AppUser } from '@/lib/api';
+import { AccountRequestRow, api, AppRole, AppSettings, AppUser } from '@/lib/api';
 import { useTheme } from '@/theme/ThemeContext';
 
 const ROLES: { key: AppRole; label: string }[] = [
@@ -32,13 +32,24 @@ export function UserAdmin() {
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [requests, setRequests] = useState<AccountRequestRow[]>([]);
   const [phoneEdit, setPhoneEdit] = useState<{ id: string; value: string } | null>(null);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [twSid, setTwSid] = useState('');
+  const [twToken, setTwToken] = useState('');
+  const [twVerify, setTwVerify] = useState('');
 
   const load = useCallback(async () => {
     if (!token) return;
     try {
-      const [u, r] = await Promise.all([api.adminListUsers(token), api.adminListRequests(token)]);
+      const [u, r, st] = await Promise.all([
+        api.adminListUsers(token),
+        api.adminListRequests(token),
+        api.adminGetSettings(token),
+      ]);
       setUsers(u);
       setRequests(r);
+      setSettings(st);
+      setTwSid(st.twilio_account_sid);
+      setTwVerify(st.twilio_verify_sid);
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Failed to load accounts');
     }
@@ -80,8 +91,75 @@ export function UserAdmin() {
     setBusy(false);
   };
 
+  const patchSettings = (patch: Parameters<typeof api.adminPatchSettings>[1], msg: string) =>
+    run(async () => {
+      const st = await api.adminPatchSettings(token!, patch);
+      setSettings(st);
+      setTwSid(st.twilio_account_sid);
+      setTwVerify(st.twilio_verify_sid);
+      setTwToken('');
+    }, msg);
+
   return (
     <View>
+      <SubTitle>App settings</SubTitle>
+      {settings ? (
+        <Card>
+          <Choice<'open' | 'closed'>
+            label="Signup"
+            options={[{ key: 'open', label: 'Open' }, { key: 'closed', label: 'Invite-only' }]}
+            value={settings.signup_mode}
+            onChange={(v) => patchSettings({ signup_mode: v }, v === 'open' ? 'Signup opened' : 'Signup closed — invite/request only')}
+          />
+          <Choice<'off' | 'required'>
+            label="Phone verification (signup + SMS reset)"
+            options={[{ key: 'off', label: 'Off' }, { key: 'required', label: 'Required' }]}
+            value={settings.phone_verification}
+            onChange={(v) => patchSettings({ phone_verification: v }, v === 'required' ? 'Phone verification required' : 'Phone verification off')}
+          />
+          <Muted style={{ fontSize: 11, marginBottom: 10 }}>
+            {settings.twilio_configured
+              ? '✓ Twilio connected — codes are sent by SMS.'
+              : 'Twilio not configured — codes print to the API logs (testing mode). Add your Twilio Verify credentials to send real texts.'}
+          </Muted>
+          <Field label="Twilio Account SID" value={twSid} onChangeText={setTwSid} placeholder="AC…" autoCapitalize="none" />
+          <Field
+            label={settings.twilio_auth_token_set ? 'Twilio Auth Token (saved — enter to replace)' : 'Twilio Auth Token'}
+            value={twToken}
+            onChangeText={setTwToken}
+            placeholder={settings.twilio_auth_token_set ? '••••••••' : 'Auth token'}
+            secureTextEntry
+            autoCapitalize="none"
+          />
+          <Field label="Twilio Verify Service SID" value={twVerify} onChangeText={setTwVerify} placeholder="VA…" autoCapitalize="none" />
+          <View style={{ flexDirection: 'row', gap: 6 }}>
+            <Pill
+              title="Save Twilio settings"
+              onPress={() =>
+                patchSettings(
+                  {
+                    twilio_account_sid: twSid.trim(),
+                    twilio_verify_sid: twVerify.trim(),
+                    ...(twToken.trim() ? { twilio_auth_token: twToken.trim() } : {}),
+                  },
+                  'Twilio settings saved',
+                )
+              }
+            />
+            <Pill
+              title="Clear"
+              quiet
+              onPress={() =>
+                patchSettings(
+                  { twilio_account_sid: '', twilio_auth_token: '', twilio_verify_sid: '' },
+                  'Twilio credentials cleared — back to log codes',
+                )
+              }
+            />
+          </View>
+        </Card>
+      ) : null}
+
       {requests.length > 0 && (
         <View>
           <SubTitle>Account requests</SubTitle>
