@@ -174,6 +174,23 @@ export const api = {
   listPosts: (token: string) => request<PostRow[]>('/posts', { token }),
   createPost: (token: string, body: string, vis: 'public' | 'org', imageNames: string[] = []) =>
     request<PostRow>('/posts', { method: 'POST', body: { body, vis, image_names: imageNames }, token }),
+  scanTimer: async (token: string, uri: string, fileName: string, mime: string): Promise<{ best: number | null; candidates: number[]; raw_text: string }> => {
+    const form = new FormData();
+    if (Platform.OS === 'web') {
+      const blob = await (await fetch(uri)).blob();
+      form.append('file', blob, fileName);
+    } else {
+      // @ts-expect-error RN FormData file object
+      form.append('file', { uri, name: fileName, type: mime });
+    }
+    const res = await fetch(`${BASE}/timer/scan`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form });
+    if (!res.ok) {
+      let msg = 'Scan failed';
+      try { msg = (await res.json()).detail || msg; } catch { /* */ }
+      throw new Error(msg);
+    }
+    return res.json();
+  },
   uploadMedia: async (token: string, uri: string, fileName: string, mime: string): Promise<{ name: string; url: string }> => {
     const form = new FormData();
     // React Native FormData file shape; on web we pass a Blob.

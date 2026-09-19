@@ -5,6 +5,7 @@ import { Readout } from '@/components/Runs';
 import { Sheet } from '@/components/Sheet';
 import { Target } from '@/components/Target';
 import { useToast } from '@/components/Toast';
+import { TimerInput } from '@/components/TimerInput';
 import { BackLink, Button, Choice, Field, Hint, Muted, Pill, Screen, SectionTitle } from '@/components/UI';
 import {
   ZONE_PTS, breakdownString, countZones, hitFactor, parseRoundCount, quickFill, scoringRounds, totalPoints,
@@ -179,7 +180,7 @@ export default function Score() {
         ))}
       </View>
 
-      <Field label="Time (sec)" value={time} onChangeText={setTime} keyboardType="decimal-pad" placeholder="0.00" />
+      <TimerInput time={time} onTime={setTime} />
       {gunOptions.length ? <Choice label="Firearm" options={gunOptions} value={String(gunIdx)} onChange={(k) => setGunIdx(parseInt(k, 10))} /> : <Muted>No firearms on this account — add one in Armory.</Muted>}
       <Field label="Drill notes" value={note} onChangeText={setNote} multiline placeholder="What to work on, setup details, cues… (use the keyboard mic to dictate)" />
 

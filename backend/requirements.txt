@@ -9,3 +9,4 @@ email-validator==2.2.*
 requests==2.32.*
 Pillow==10.*
 python-multipart
+pytesseract==0.3.*

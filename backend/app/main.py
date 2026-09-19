@@ -9,7 +9,7 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import emailer, phone as phone_mod, settings as settings_mod, storage
+from . import emailer, phone as phone_mod, settings as settings_mod, storage, timerocr
 from .db import Base, engine, get_db
 from .models import ROLES, AccountRequest, AppSetting, Comment, Connection, PasswordReset, PhoneCode, Post, PostImage, PostLike, User
 from .security import (
@@ -638,6 +638,22 @@ def _validated_names(db_names: list[str]) -> list[str]:
     return out
 
 
+@app.post("/api/timer/scan")
+def scan_timer(file: UploadFile = File(...), _: User = Depends(current_user)):
+    """OCR a shot-timer photo → suggested time(s). The photo is NOT stored;
+    it's read in memory and discarded. Result is a suggestion to confirm."""
+    raw = file.file.read()
+    if len(raw) > storage.MAX_BYTES:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Image is too large")
+    try:
+        result = timerocr.read_time(raw)
+    except Exception:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Could not read the image")
+    if result.get("engine") == "unavailable":
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Timer OCR isn't available on the server")
+    return result
+
+
 @app.post("/api/media/upload")
 def upload_media(file: UploadFile = File(...), _: User = Depends(current_user)):
     raw = file.file.read()
@@ -946,6 +962,22 @@ def _validated_names(db_names: list[str]) -> list[str]:
         if storage.open_media(n) is not None:
             out.append(n)
     return out
+
+
+@app.post("/api/timer/scan")
+def scan_timer(file: UploadFile = File(...), _: User = Depends(current_user)):
+    """OCR a shot-timer photo → suggested time(s). The photo is NOT stored;
+    it's read in memory and discarded. Result is a suggestion to confirm."""
+    raw = file.file.read()
+    if len(raw) > storage.MAX_BYTES:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Image is too large")
+    try:
+        result = timerocr.read_time(raw)
+    except Exception:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Could not read the image")
+    if result.get("engine") == "unavailable":
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Timer OCR isn't available on the server")
+    return result
 
 
 @app.post("/api/media/upload")
