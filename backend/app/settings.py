@@ -22,6 +22,8 @@ KEYS = (
     "smtp_user",
     "smtp_password",        # secret: never echoed back by the API
     "smtp_from",
+    "timer_ocr_engine",       # "tesseract" (default) or "google"
+    "google_vision_api_key",  # secret: never echoed back
 )
 
 _ENV = {
@@ -36,6 +38,8 @@ _ENV = {
     "smtp_user": ("SMTP_USER", ""),
     "smtp_password": ("SMTP_PASS", ""),
     "smtp_from": ("SMTP_FROM", ""),
+    "timer_ocr_engine": ("TIMER_OCR_ENGINE", "tesseract"),
+    "google_vision_api_key": ("GOOGLE_VISION_API_KEY", ""),
 }
 
 
@@ -82,6 +86,14 @@ def smtp_cfg(db: Session) -> tuple[str, int, str, str, str] | None:
     password = get_setting(db, "smtp_password")
     from_addr = get_setting(db, "smtp_from") or user or "rangeday@localhost"
     return (host, port, user, password, from_addr)
+
+
+def ocr_engine(db: Session) -> str:
+    return get_setting(db, "timer_ocr_engine").lower()
+
+
+def google_vision_key(db: Session) -> str:
+    return get_setting(db, "google_vision_api_key")
 
 
 def twilio_cfg(db: Session) -> tuple[str, str, str] | None:

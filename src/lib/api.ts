@@ -125,6 +125,9 @@ export interface AppSettings {
   smtp_from: string;
   smtp_password_set: boolean;
   email_configured: boolean;
+  timer_ocr_engine: 'tesseract' | 'google';
+  google_vision_key_set: boolean;
+  google_vision_ready: boolean;
 }
 
 export interface AccountRequestRow {
@@ -231,7 +234,7 @@ export const api = {
   removeContact: (token: string, id: string) =>
     request<{ ok: boolean }>(`/contacts/${id}`, { method: 'DELETE', token }),
   adminGetSettings: (token: string) => request<AppSettings>('/admin/settings', { token }),
-  adminPatchSettings: (token: string, patch: Partial<Record<'signup_mode' | 'phone_verification' | 'twilio_account_sid' | 'twilio_auth_token' | 'twilio_verify_sid' | 'twilio_sms_from' | 'smtp_host' | 'smtp_port' | 'smtp_user' | 'smtp_password' | 'smtp_from', string>>) =>
+  adminPatchSettings: (token: string, patch: Partial<Record<'signup_mode' | 'phone_verification' | 'twilio_account_sid' | 'twilio_auth_token' | 'twilio_verify_sid' | 'twilio_sms_from' | 'smtp_host' | 'smtp_port' | 'smtp_user' | 'smtp_password' | 'smtp_from' | 'timer_ocr_engine' | 'google_vision_api_key', string>>) =>
     request<AppSettings>('/admin/settings', { method: 'PATCH', body: patch, token }),
   adminApproveRequest: (token: string, id: string) =>
     request<{ user: AppUser; invite_link: string; sms_sent: boolean }>(`/admin/requests/${id}/approve`, { method: 'POST', token }),

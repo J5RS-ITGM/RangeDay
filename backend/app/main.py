@@ -420,6 +420,9 @@ class SettingsOut(BaseModel):
     smtp_from: str
     smtp_password_set: bool
     email_configured: bool
+    timer_ocr_engine: str
+    google_vision_key_set: bool
+    google_vision_ready: bool
 
 
 class SettingsPatch(BaseModel):
@@ -434,6 +437,8 @@ class SettingsPatch(BaseModel):
     smtp_user: str | None = None
     smtp_password: str | None = None
     smtp_from: str | None = None
+    timer_ocr_engine: str | None = None
+    google_vision_api_key: str | None = None
 
 
 class InviteOut(BaseModel):
@@ -597,6 +602,9 @@ class SettingsOut(BaseModel):
     smtp_from: str
     smtp_password_set: bool
     email_configured: bool
+    timer_ocr_engine: str
+    google_vision_key_set: bool
+    google_vision_ready: bool
 
 
 class SettingsPatch(BaseModel):
@@ -611,6 +619,8 @@ class SettingsPatch(BaseModel):
     smtp_user: str | None = None
     smtp_password: str | None = None
     smtp_from: str | None = None
+    timer_ocr_engine: str | None = None
+    google_vision_api_key: str | None = None
 
 
 def _contact_out(c: Connection, me: User, other: User) -> ContactOut:
@@ -639,18 +649,22 @@ def _validated_names(db_names: list[str]) -> list[str]:
 
 
 @app.post("/api/timer/scan")
-def scan_timer(file: UploadFile = File(...), _: User = Depends(current_user)):
+def scan_timer(file: UploadFile = File(...), _: User = Depends(current_user), db: Session = Depends(get_db)):
     """OCR a shot-timer photo → suggested time(s). The photo is NOT stored;
     it's read in memory and discarded. Result is a suggestion to confirm."""
     raw = file.file.read()
     if len(raw) > storage.MAX_BYTES:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Image is too large")
+    engine = settings_mod.ocr_engine(db)
+    gkey = settings_mod.google_vision_key(db) if engine == "google" else ""
     try:
-        result = timerocr.read_time(raw)
+        result = timerocr.read_time(raw, engine=engine, google_key=gkey)
     except Exception:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Could not read the image")
     if result.get("engine") == "unavailable":
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Timer OCR isn't available on the server")
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Timer OCR isn't set up. Add a Google Vision API key in Admin - API, or enable server OCR.")
+    if result.get("error") == "auth":
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Google Vision rejected the API key - check it in Admin - API.")
     return result
 
 
@@ -965,18 +979,22 @@ def _validated_names(db_names: list[str]) -> list[str]:
 
 
 @app.post("/api/timer/scan")
-def scan_timer(file: UploadFile = File(...), _: User = Depends(current_user)):
+def scan_timer(file: UploadFile = File(...), _: User = Depends(current_user), db: Session = Depends(get_db)):
     """OCR a shot-timer photo → suggested time(s). The photo is NOT stored;
     it's read in memory and discarded. Result is a suggestion to confirm."""
     raw = file.file.read()
     if len(raw) > storage.MAX_BYTES:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Image is too large")
+    engine = settings_mod.ocr_engine(db)
+    gkey = settings_mod.google_vision_key(db) if engine == "google" else ""
     try:
-        result = timerocr.read_time(raw)
+        result = timerocr.read_time(raw, engine=engine, google_key=gkey)
     except Exception:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Could not read the image")
     if result.get("engine") == "unavailable":
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Timer OCR isn't available on the server")
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Timer OCR isn't set up. Add a Google Vision API key in Admin - API, or enable server OCR.")
+    if result.get("error") == "auth":
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Google Vision rejected the API key - check it in Admin - API.")
     return result
 
 
@@ -1187,6 +1205,9 @@ def _settings_out(db: Session) -> SettingsOut:
         smtp_from=settings_mod.get_setting(db, "smtp_from"),
         smtp_password_set=bool(settings_mod.get_setting(db, "smtp_password")),
         email_configured=settings_mod.smtp_cfg(db) is not None,
+        timer_ocr_engine=settings_mod.ocr_engine(db),
+        google_vision_key_set=bool(settings_mod.google_vision_key(db)),
+        google_vision_ready=(settings_mod.ocr_engine(db) == "google" and bool(settings_mod.google_vision_key(db))),
     )
 
 
@@ -1220,6 +1241,12 @@ def patch_settings(body: SettingsPatch, _: User = Depends(admin_user), db: Sessi
         v = getattr(body, k)
         if v is not None:
             settings_mod.set_setting(db, k, v)
+    if body.timer_ocr_engine is not None:
+        if body.timer_ocr_engine.lower() not in ("tesseract", "google"):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "OCR engine must be tesseract or google")
+        settings_mod.set_setting(db, "timer_ocr_engine", body.timer_ocr_engine.lower())
+    if body.google_vision_api_key is not None:
+        settings_mod.set_setting(db, "google_vision_api_key", body.google_vision_api_key)
     db.commit()
     return _settings_out(db)
 

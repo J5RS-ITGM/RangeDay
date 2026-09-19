@@ -35,6 +35,8 @@ services:
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
       UPLOAD_DIR: /srv/uploads
+      TIMER_OCR_ENGINE: ${TIMER_OCR_ENGINE:-tesseract}
+      GOOGLE_VISION_API_KEY: ${GOOGLE_VISION_API_KEY:-}
     volumes:
       - rangeday_uploads:/srv/uploads
     depends_on:

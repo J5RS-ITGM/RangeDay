@@ -34,7 +34,7 @@ export function UserAdmin() {
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [requests, setRequests] = useState<AccountRequestRow[]>([]);
   const [phoneEdit, setPhoneEdit] = useState<{ id: string; value: string } | null>(null);
-  const [tab, setTab] = useState<'users' | 'general' | 'notify'>('users');
+  const [tab, setTab] = useState<'users' | 'general' | 'notify' | 'api'>('users');
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [twSid, setTwSid] = useState('');
   const [twToken, setTwToken] = useState('');
@@ -45,6 +45,7 @@ export function UserAdmin() {
   const [smUser, setSmUser] = useState('');
   const [smPass, setSmPass] = useState('');
   const [smFrom, setSmFrom] = useState('');
+  const [gKey, setGKey] = useState('');
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -118,7 +119,7 @@ export function UserAdmin() {
   return (
     <View>
       <Segmented
-        options={[{ key: 'users', label: 'Users' }, { key: 'general', label: 'General' }, { key: 'notify', label: 'Email & Text' }]}
+        options={[{ key: 'users', label: 'Users' }, { key: 'general', label: 'General' }, { key: 'notify', label: 'Email & Text' }, { key: 'api', label: 'API' }]}
         value={tab}
         onChange={setTab}
       />
@@ -212,6 +213,40 @@ export function UserAdmin() {
                 )
               }
             />
+          </View>
+        </Card>
+      ) : null}
+
+      {tab === 'api' && settings ? (
+        <Card>
+          <SubTitle style={{ marginTop: 0 }}>Timer photo OCR</SubTitle>
+          <Muted style={{ fontSize: 11, marginBottom: 10 }}>
+            Reads the time off a shot-timer photo on the scoring screen. Google Vision reads LED and LCD displays far better than the built-in reader, with no per-timer tuning. First 1,000 scans a month are free, then about $1.50 per 1,000.
+          </Muted>
+          <Choice<'tesseract' | 'google'>
+            label="OCR engine"
+            options={[{ key: 'tesseract', label: 'Built-in' }, { key: 'google', label: 'Google Vision' }]}
+            value={settings.timer_ocr_engine}
+            onChange={(v) => patchSettings({ timer_ocr_engine: v }, v === 'google' ? 'Using Google Vision' : 'Using built-in OCR')}
+          />
+          <Muted style={{ fontSize: 11, marginBottom: 10 }}>
+            {settings.google_vision_ready
+              ? '✓ Google Vision connected — timer scans use it.'
+              : settings.timer_ocr_engine === 'google'
+                ? 'Google Vision selected but no API key saved yet — add one below.'
+                : 'Add a Google Vision API key and switch the engine to Google Vision to use it.'}
+          </Muted>
+          <Field
+            label={settings.google_vision_key_set ? 'Google Vision API key (saved — enter to replace)' : 'Google Vision API key'}
+            value={gKey}
+            onChangeText={setGKey}
+            placeholder={settings.google_vision_key_set ? '••••••••' : 'AIza…'}
+            secureTextEntry
+            autoCapitalize="none"
+          />
+          <View style={{ flexDirection: 'row', gap: 6 }}>
+            <Pill title="Save API key" onPress={() => { if (!gKey.trim()) { toast('Paste the key first'); return; } patchSettings({ google_vision_api_key: gKey.trim() }, 'API key saved'); setGKey(''); }} />
+            <Pill title="Clear" quiet onPress={() => { setGKey(''); patchSettings({ google_vision_api_key: '' }, 'API key cleared'); }} />
           </View>
         </Card>
       ) : null}

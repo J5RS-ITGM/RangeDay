@@ -53,9 +53,55 @@ def _variants(raw: bytes):
     yield base.filter(ImageFilter.SHARPEN)
 
 
-def read_time(raw: bytes) -> dict:
+def _extract_times(text: str) -> list[float]:
+    seen: list[float] = []
+    for m in _TIME_RE.finditer(text.replace(" ", "")):
+        try:
+            val = float(f"{m.group(1)}.{m.group(2)}")
+        except ValueError:
+            continue
+        if 0.05 <= val <= 600 and val not in seen:
+            seen.append(val)
+    return seen
+
+
+def _read_google(raw: bytes, api_key: str) -> dict:
+    """Google Cloud Vision via REST + API key. No per-timer tuning: Vision
+    reads LED/LCD displays, angles, and glare far better than Tesseract."""
+    import base64
+    import requests as http
+    payload = {
+        "requests": [{
+            "image": {"content": base64.b64encode(raw).decode()},
+            "features": [{"type": "TEXT_DETECTION"}],
+        }]
+    }
+    try:
+        r = http.post(
+            f"https://vision.googleapis.com/v1/images:annotate?key={api_key}",
+            json=payload, timeout=20,
+        )
+    except Exception:
+        return {"candidates": [], "best": None, "raw_text": "", "engine": "google", "error": "network"}
+    if r.status_code == 400 or r.status_code == 403:
+        return {"candidates": [], "best": None, "raw_text": "", "engine": "google", "error": "auth"}
+    if not r.ok:
+        return {"candidates": [], "best": None, "raw_text": "", "engine": "google", "error": "http"}
+    data = r.json()
+    try:
+        text = data["responses"][0].get("fullTextAnnotation", {}).get("text", "")             or (data["responses"][0].get("textAnnotations", [{}])[0].get("description", ""))
+    except (KeyError, IndexError):
+        text = ""
+    cands = _extract_times(text)
+    return {"candidates": cands[:5], "best": cands[0] if cands else None,
+            "raw_text": text.replace("\n", " ")[:200], "engine": "google"}
+
+
+def read_time(raw: bytes, engine: str = "tesseract", google_key: str = "") -> dict:
     """Return {candidates: [float,...], best: float|None, raw_text: str}.
-    candidates are all time-like numbers found, most confident first."""
+    engine: 'google' (needs google_key) or 'tesseract'."""
+    if engine == "google" and google_key:
+        return _read_google(raw, google_key)
     if not available():
         return {"candidates": [], "best": None, "raw_text": "", "engine": "unavailable"}
 
