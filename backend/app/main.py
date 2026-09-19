@@ -6,12 +6,12 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import emailer, phone as phone_mod, settings as settings_mod
 from .db import Base, engine, get_db
-from .models import ROLES, AccountRequest, AppSetting, Connection, PasswordReset, PhoneCode, User
+from .models import ROLES, AccountRequest, AppSetting, Connection, PasswordReset, PhoneCode, Post, PostLike, User
 from .security import (
     INVITE_TTL,
     hash_password,
@@ -78,6 +78,7 @@ if engine.dialect.name == "postgresql":
     with engine.begin() as _conn:
         _conn.execute(_text("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(20) NOT NULL DEFAULT ''"))
         _conn.execute(_text("ALTER TABLE account_requests ADD COLUMN IF NOT EXISTS phone VARCHAR(20) NOT NULL DEFAULT ''"))
+        _conn.execute(_text("ALTER TABLE users ADD COLUMN IF NOT EXISTS org VARCHAR(64) NOT NULL DEFAULT ''"))
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -340,6 +341,26 @@ def list_users(_: User = Depends(admin_user), db: Session = Depends(get_db)):
     return [to_out(u) for u in db.scalars(select(User).order_by(User.created_at)).all()]
 
 
+class PostIn(BaseModel):
+    body: str = Field(min_length=1, max_length=4000)
+    title: str = Field(default="", max_length=120)
+    vis: str = Field(default="public")
+
+
+class PostOut(BaseModel):
+    id: str
+    author: str
+    initial: str
+    org_post: bool
+    vis: str
+    title: str
+    body: str
+    created_at: datetime
+    likes: int
+    liked: bool
+    mine: bool
+
+
 class ContactAddIn(BaseModel):
     identifier: str = Field(min_length=3, max_length=255)  # email or phone
 
@@ -477,6 +498,26 @@ def reject_request(request_id: str, _: User = Depends(admin_user), db: Session =
     return {"ok": True}
 
 
+class PostIn(BaseModel):
+    body: str = Field(min_length=1, max_length=4000)
+    title: str = Field(default="", max_length=120)
+    vis: str = Field(default="public")
+
+
+class PostOut(BaseModel):
+    id: str
+    author: str
+    initial: str
+    org_post: bool
+    vis: str
+    title: str
+    body: str
+    created_at: datetime
+    likes: int
+    liked: bool
+    mine: bool
+
+
 class ContactAddIn(BaseModel):
     identifier: str = Field(min_length=3, max_length=255)  # email or phone
 
@@ -539,6 +580,80 @@ def _contact_out(c: Connection, me: User, other: User) -> ContactOut:
         direction="outgoing" if c.requester_id == me.id else "incoming",
         user=ContactUser(id=other.id, display_name=other.display_name, email=other.email, phone=other.phone),
     )
+
+
+@app.get("/api/posts", response_model=list[PostOut])
+def list_posts(me: User = Depends(current_user), db: Session = Depends(get_db)):
+    # Visibility: public posts to everyone; org posts only within the org.
+    rows = db.scalars(
+        select(Post).where((Post.vis == "public") | ((Post.vis == "org") & (Post.org == me.org))).order_by(Post.created_at.desc())
+    ).all()
+    if not rows:
+        return []
+    ids = [p.id for p in rows]
+    like_counts: dict[str, int] = {}
+    for pid in db.scalars(select(PostLike.post_id).where(PostLike.post_id.in_(ids))).all():
+        like_counts[pid] = like_counts.get(pid, 0) + 1
+    mine_likes = set(db.scalars(select(PostLike.post_id).where(PostLike.post_id.in_(ids), PostLike.user_id == me.id)).all())
+    authors = {u.id: u for u in db.scalars(select(User).where(User.id.in_([p.author_id for p in rows]))).all()}
+    out = []
+    for p in rows:
+        a = authors.get(p.author_id)
+        name = a.display_name if a else "Unknown"
+        out.append(PostOut(
+            id=p.id, author=name, initial=(name[:1].upper() or "?"),
+            org_post=(p.vis == "org"), vis=p.vis, title=p.title, body=p.body,
+            created_at=p.created_at, likes=like_counts.get(p.id, 0),
+            liked=p.id in mine_likes, mine=(p.author_id == me.id),
+        ))
+    return out
+
+
+@app.post("/api/posts", response_model=PostOut)
+def create_post(body: PostIn, me: User = Depends(current_user), db: Session = Depends(get_db)):
+    if body.vis not in ("public", "org"):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "vis must be public or org")
+    text = body.body.strip()
+    if not text:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Write something first")
+    title = body.title.strip() or (text[:48] + ("…" if len(text) > 48 else ""))
+    p = Post(author_id=me.id, org=me.org, vis=body.vis, title=title, body=text)
+    db.add(p)
+    db.commit()
+    return PostOut(
+        id=p.id, author=me.display_name, initial=(me.display_name[:1].upper() or "?"),
+        org_post=(p.vis == "org"), vis=p.vis, title=p.title, body=p.body,
+        created_at=p.created_at, likes=0, liked=False, mine=True,
+    )
+
+
+@app.post("/api/posts/{post_id}/like")
+def toggle_like(post_id: str, me: User = Depends(current_user), db: Session = Depends(get_db)):
+    p = db.get(Post, post_id)
+    if not p or (p.vis == "org" and p.org != me.org):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such post")
+    existing = db.get(PostLike, {"post_id": post_id, "user_id": me.id})
+    if existing:
+        db.delete(existing)
+        liked = False
+    else:
+        db.add(PostLike(post_id=post_id, user_id=me.id))
+        liked = True
+    db.commit()
+    count = db.scalar(select(func.count()).select_from(PostLike).where(PostLike.post_id == post_id)) or 0
+    return {"liked": liked, "likes": count}
+
+
+@app.delete("/api/posts/{post_id}")
+def delete_post(post_id: str, me: User = Depends(current_user), db: Session = Depends(get_db)):
+    p = db.get(Post, post_id)
+    if not p:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such post")
+    if p.author_id != me.id and me.role != "admin":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You can only delete your own posts")
+    db.delete(p)
+    db.commit()
+    return {"ok": True}
 
 
 @app.get("/api/contacts", response_model=ContactsOut)
@@ -663,6 +778,80 @@ def _contact_out(c: Connection, me: User, other: User) -> ContactOut:
         direction="outgoing" if c.requester_id == me.id else "incoming",
         user=ContactUser(id=other.id, display_name=other.display_name, email=other.email, phone=other.phone),
     )
+
+
+@app.get("/api/posts", response_model=list[PostOut])
+def list_posts(me: User = Depends(current_user), db: Session = Depends(get_db)):
+    # Visibility: public posts to everyone; org posts only within the org.
+    rows = db.scalars(
+        select(Post).where((Post.vis == "public") | ((Post.vis == "org") & (Post.org == me.org))).order_by(Post.created_at.desc())
+    ).all()
+    if not rows:
+        return []
+    ids = [p.id for p in rows]
+    like_counts: dict[str, int] = {}
+    for pid in db.scalars(select(PostLike.post_id).where(PostLike.post_id.in_(ids))).all():
+        like_counts[pid] = like_counts.get(pid, 0) + 1
+    mine_likes = set(db.scalars(select(PostLike.post_id).where(PostLike.post_id.in_(ids), PostLike.user_id == me.id)).all())
+    authors = {u.id: u for u in db.scalars(select(User).where(User.id.in_([p.author_id for p in rows]))).all()}
+    out = []
+    for p in rows:
+        a = authors.get(p.author_id)
+        name = a.display_name if a else "Unknown"
+        out.append(PostOut(
+            id=p.id, author=name, initial=(name[:1].upper() or "?"),
+            org_post=(p.vis == "org"), vis=p.vis, title=p.title, body=p.body,
+            created_at=p.created_at, likes=like_counts.get(p.id, 0),
+            liked=p.id in mine_likes, mine=(p.author_id == me.id),
+        ))
+    return out
+
+
+@app.post("/api/posts", response_model=PostOut)
+def create_post(body: PostIn, me: User = Depends(current_user), db: Session = Depends(get_db)):
+    if body.vis not in ("public", "org"):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "vis must be public or org")
+    text = body.body.strip()
+    if not text:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Write something first")
+    title = body.title.strip() or (text[:48] + ("…" if len(text) > 48 else ""))
+    p = Post(author_id=me.id, org=me.org, vis=body.vis, title=title, body=text)
+    db.add(p)
+    db.commit()
+    return PostOut(
+        id=p.id, author=me.display_name, initial=(me.display_name[:1].upper() or "?"),
+        org_post=(p.vis == "org"), vis=p.vis, title=p.title, body=p.body,
+        created_at=p.created_at, likes=0, liked=False, mine=True,
+    )
+
+
+@app.post("/api/posts/{post_id}/like")
+def toggle_like(post_id: str, me: User = Depends(current_user), db: Session = Depends(get_db)):
+    p = db.get(Post, post_id)
+    if not p or (p.vis == "org" and p.org != me.org):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such post")
+    existing = db.get(PostLike, {"post_id": post_id, "user_id": me.id})
+    if existing:
+        db.delete(existing)
+        liked = False
+    else:
+        db.add(PostLike(post_id=post_id, user_id=me.id))
+        liked = True
+    db.commit()
+    count = db.scalar(select(func.count()).select_from(PostLike).where(PostLike.post_id == post_id)) or 0
+    return {"liked": liked, "likes": count}
+
+
+@app.delete("/api/posts/{post_id}")
+def delete_post(post_id: str, me: User = Depends(current_user), db: Session = Depends(get_db)):
+    p = db.get(Post, post_id)
+    if not p:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such post")
+    if p.author_id != me.id and me.role != "admin":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You can only delete your own posts")
+    db.delete(p)
+    db.commit()
+    return {"ok": True}
 
 
 @app.get("/api/contacts", response_model=ContactsOut)

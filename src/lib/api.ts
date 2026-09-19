@@ -69,6 +69,20 @@ async function request<T>(
   return data as T;
 }
 
+export interface PostRow {
+  id: string;
+  author: string;
+  initial: string;
+  org_post: boolean;
+  vis: 'public' | 'org';
+  title: string;
+  body: string;
+  created_at: string;
+  likes: number;
+  liked: boolean;
+  mine: boolean;
+}
+
 export interface ContactRow {
   id: string;
   status: 'pending' | 'accepted';
@@ -143,6 +157,13 @@ export const api = {
   adminCreateUser: (token: string, body: { email: string; display_name: string; role: AppRole; phone?: string }) =>
     request<{ user: AppUser; invite_link: string; sms_sent: boolean }>('/admin/users', { method: 'POST', body, token }),
   adminListRequests: (token: string) => request<AccountRequestRow[]>('/admin/requests', { token }),
+  listPosts: (token: string) => request<PostRow[]>('/posts', { token }),
+  createPost: (token: string, body: string, vis: 'public' | 'org') =>
+    request<PostRow>('/posts', { method: 'POST', body: { body, vis }, token }),
+  likePost: (token: string, id: string) =>
+    request<{ liked: boolean; likes: number }>(`/posts/${id}/like`, { method: 'POST', token }),
+  deletePost: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/posts/${id}`, { method: 'DELETE', token }),
   listContacts: (token: string) => request<ContactsResponse>('/contacts', { token }),
   addContact: (token: string, identifier: string) =>
     request<ContactRow>('/contacts', { method: 'POST', body: { identifier }, token }),

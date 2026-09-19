@@ -24,6 +24,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String(120), default="", nullable=False)
     phone: Mapped[str] = mapped_column(String(20), default="", nullable=False)
+    org: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     role: Mapped[str] = mapped_column(String(24), default="shooter", nullable=False)
     disabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -47,6 +48,26 @@ class AppSetting(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+
+
+class Post(Base):
+    """A community post. vis: 'public' (everyone) or 'org' (same org)."""
+    __tablename__ = "posts"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    author_id: Mapped[str] = mapped_column(String(32), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    org: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    vis: Mapped[str] = mapped_column(String(16), default="public", nullable=False)
+    title: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    body: Mapped[str] = mapped_column(String(4000), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
+
+
+class PostLike(Base):
+    __tablename__ = "post_likes"
+
+    post_id: Mapped[str] = mapped_column(String(32), ForeignKey("posts.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
 
 
 class Connection(Base):
