@@ -1,11 +1,34 @@
+import { DrawerActions } from '@react-navigation/native';
 import { Drawer } from 'expo-router/drawer';
+import { useNavigation } from 'expo-router';
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { DrawerContent } from '@/components/DrawerContent';
+import { usePending } from '@/contacts/PendingContext';
 import { useToast } from '@/components/Toast';
+import { MenuIcon } from '@/components/Icons';
 import { useStore } from '@/store/MockStore';
 import { useTheme } from '@/theme/ThemeContext';
 import { FONTS } from '@/theme/tokens';
+
+/** Hamburger with a red dot when contact requests are waiting. */
+function MenuButton() {
+  const { theme } = useTheme();
+  const navigation = useNavigation();
+  const { pending } = usePending();
+  return (
+    <Pressable
+      onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
+      style={{ marginLeft: 16, width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}
+      hitSlop={8}
+    >
+      <MenuIcon color={theme.accent} />
+      {pending > 0 ? (
+        <View style={{ position: 'absolute', top: 2, right: 2, width: 10, height: 10, borderRadius: 5, backgroundColor: theme.miss, borderWidth: 1.5, borderColor: theme.surface }} />
+      ) : null}
+    </Pressable>
+  );
+}
 
 function BrandTitle() {
   const { theme } = useTheme();
@@ -48,6 +71,7 @@ export default function DrawerLayout() {
         headerTintColor: theme.accent,
         headerTitleAlign: 'left',
         headerTitle: () => <BrandTitle />,
+        headerLeft: () => <MenuButton />,
         headerRight: () => <View style={{ marginRight: 16 }}><ProfilePill /></View>,
         drawerStyle: { backgroundColor: theme.surface, width: 280 },
         drawerType: 'front',

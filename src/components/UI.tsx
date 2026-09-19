@@ -416,3 +416,14 @@ export function SettingRow({ label, sub, right, last }: { label: string; sub?: s
     </View>
   );
 }
+
+
+export function Badge({ count }: { count: number }) {
+  const { theme } = useTheme();
+  if (!count) return null;
+  return (
+    <View style={{ minWidth: 18, height: 18, borderRadius: 9, backgroundColor: theme.miss, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 }}>
+      <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>{count > 9 ? '9+' : count}</Text>
+    </View>
+  );
+}

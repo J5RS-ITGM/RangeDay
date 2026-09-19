@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { useAuth } from '@/auth/AuthContext';
 import { useToast } from '@/components/Toast';
-import { Card, Choice, Empty, Field, Muted, Pill, Row, Strong, SubTitle } from '@/components/UI';
+import { Card, Choice, Empty, Field, Muted, Pill, Row, Strong, SubTitle, Segmented } from '@/components/UI';
 import { AccountRequestRow, api, AppRole, AppSettings, AppUser } from '@/lib/api';
 import { useTheme } from '@/theme/ThemeContext';
 
@@ -34,6 +34,7 @@ export function UserAdmin() {
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [requests, setRequests] = useState<AccountRequestRow[]>([]);
   const [phoneEdit, setPhoneEdit] = useState<{ id: string; value: string } | null>(null);
+  const [tab, setTab] = useState<'users' | 'general' | 'notify'>('users');
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [twSid, setTwSid] = useState('');
   const [twToken, setTwToken] = useState('');
@@ -116,8 +117,13 @@ export function UserAdmin() {
 
   return (
     <View>
-      <SubTitle>App settings</SubTitle>
-      {settings ? (
+      <Segmented
+        options={[{ key: 'users', label: 'Users' }, { key: 'general', label: 'General' }, { key: 'notify', label: 'Email & Text' }]}
+        value={tab}
+        onChange={setTab}
+      />
+
+      {tab === 'general' && settings ? (
         <Card>
           <Choice<'open' | 'closed'>
             label="Signup"
@@ -131,6 +137,12 @@ export function UserAdmin() {
             value={settings.phone_verification}
             onChange={(v) => patchSettings({ phone_verification: v }, v === 'required' ? 'Phone verification required' : 'Phone verification off')}
           />
+        </Card>
+      ) : null}
+
+      {tab === 'notify' && settings ? (
+        <Card>
+          <SubTitle style={{ marginTop: 0 }}>Text messages (Twilio)</SubTitle>
           <Muted style={{ fontSize: 11, marginBottom: 10 }}>
             {settings.twilio_configured
               ? '✓ Twilio connected — codes are sent by SMS.'
@@ -152,7 +164,7 @@ export function UserAdmin() {
               ? '✓ SMS sender set — invites with a phone number are texted automatically.'
               : 'Texted invites need a Twilio number you own (toll-free is easiest; it must pass toll-free verification before carriers deliver). Verification codes work without this.'}
           </Muted>
-          <SubTitle style={{ marginTop: 14 }}>Email (SMTP)</SubTitle>
+          <SubTitle style={{ marginTop: 16 }}>Email (SMTP)</SubTitle>
           <Muted style={{ fontSize: 11, marginBottom: 10 }}>
             {settings.email_configured
               ? '✓ Email connected — reset links and invites are emailed.'
@@ -204,9 +216,11 @@ export function UserAdmin() {
         </Card>
       ) : null}
 
+      {tab === 'users' && (
+      <View>
       {requests.length > 0 && (
         <View>
-          <SubTitle>Account requests</SubTitle>
+          <SubTitle style={{ marginTop: 0 }}>Account requests</SubTitle>
           {requests.map((r) => (
             <Card key={r.id}>
               <Row style={{ alignItems: 'flex-start' }}>
@@ -355,6 +369,8 @@ export function UserAdmin() {
       <Muted style={{ fontSize: 11, lineHeight: 16 }}>
         Disable removes access immediately but keeps the account and its data. Delete is permanent. You cannot disable, delete, or demote yourself — the server enforces all three.
       </Muted>
+      </View>
+      )}
     </View>
   );
 }

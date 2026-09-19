@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { useAuth } from '@/auth/AuthContext';
+import { usePending } from '@/contacts/PendingContext';
 import { AddSheet } from '@/components/Sheet';
 import { useToast } from '@/components/Toast';
 import { Avatar, Card, Empty, Field, Muted, Note, NoteStrong, Pill, Row, Screen, SectionHead, Strong, SubTitle, VisTag } from '@/components/UI';
@@ -16,6 +17,7 @@ export default function Contacts() {
 
 function LiveContacts() {
   const { token } = useAuth();
+  const { refresh: refreshPending } = usePending();
   const toast = useToast();
   const [ident, setIdent] = useState('');
   const [contacts, setContacts] = useState<ContactRow[]>([]);
@@ -32,6 +34,7 @@ function LiveContacts() {
       setContacts(r.contacts);
       setIncoming(r.incoming);
       setOutgoing(r.outgoing);
+      refreshPending();
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Could not load contacts');
     }

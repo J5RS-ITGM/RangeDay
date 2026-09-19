@@ -5,6 +5,8 @@ import {
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '@/auth/AuthContext';
+import { usePending } from '@/contacts/PendingContext';
+import { Badge } from '@/components/UI';
 import { useStore } from '@/store/MockStore';
 import { useTheme } from '@/theme/ThemeContext';
 import { FONTS } from '@/theme/tokens';
@@ -51,6 +53,7 @@ export function DrawerContent(props: DrawerContentComponentProps) {
   // Rendering convenience only — real enforcement is server-side.
   const { acct } = useStore();
   const { configured, isAdmin, appUser, signOut } = useAuth();
+  const { pending } = usePending();
   const IS_ADMIN = configured ? isAdmin : acct.role === 'admin';
   const activeRoute = props.state.routes[props.state.index]?.name;
 
@@ -97,11 +100,12 @@ export function DrawerContent(props: DrawerContentComponentProps) {
               <Text
                 style={[
                   styles.itemLabel,
-                  { color, fontFamily: FONTS.display },
+                  { color, fontFamily: FONTS.display, flex: 1 },
                 ]}
               >
                 {n.label.toUpperCase()}
               </Text>
+              {n.route === 'contacts' ? <Badge count={pending} /> : null}
             </Pressable>
           );
         })}

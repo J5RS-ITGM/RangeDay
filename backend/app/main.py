@@ -562,7 +562,7 @@ def list_contacts(me: User = Depends(current_user), db: Session = Depends(get_db
 
 
 @app.post("/api/contacts", response_model=ContactOut)
-def add_contact(body: ContactAddIn, me: User = Depends(current_user), db: Session = Depends(get_db)):
+def add_contact(body: ContactAddIn, background: BackgroundTasks, me: User = Depends(current_user), db: Session = Depends(get_db)):
     ident = body.identifier.strip()
     other: User | None = None
     if "@" in ident:
@@ -590,11 +590,13 @@ def add_contact(body: ContactAddIn, me: User = Depends(current_user), db: Sessio
     c = Connection(requester_id=me.id, addressee_id=other.id, status="pending")
     db.add(c)
     db.commit()
+    accept_link = f"{APP_ORIGIN}/accept-contact?id={c.id}"
+    background.add_task(emailer.send_connection_request_email, other.email, me.display_name, accept_link, settings_mod.smtp_cfg(db))
     return _contact_out(c, me, other)
 
 
 @app.post("/api/contacts/{conn_id}/accept", response_model=ContactOut)
-def accept_contact(conn_id: str, me: User = Depends(current_user), db: Session = Depends(get_db)):
+def accept_contact(conn_id: str, background: BackgroundTasks, me: User = Depends(current_user), db: Session = Depends(get_db)):
     c = db.get(Connection, conn_id)
     if not c or (me.id not in (c.requester_id, c.addressee_id)):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No such request")
@@ -603,6 +605,7 @@ def accept_contact(conn_id: str, me: User = Depends(current_user), db: Session =
     c.status = "accepted"
     db.commit()
     other = db.get(User, c.requester_id)
+    background.add_task(emailer.send_connection_accepted_email, other.email, me.display_name, APP_ORIGIN, settings_mod.smtp_cfg(db))
     return _contact_out(c, me, other)
 
 
@@ -683,7 +686,7 @@ def list_contacts(me: User = Depends(current_user), db: Session = Depends(get_db
 
 
 @app.post("/api/contacts", response_model=ContactOut)
-def add_contact(body: ContactAddIn, me: User = Depends(current_user), db: Session = Depends(get_db)):
+def add_contact(body: ContactAddIn, background: BackgroundTasks, me: User = Depends(current_user), db: Session = Depends(get_db)):
     ident = body.identifier.strip()
     other: User | None = None
     if "@" in ident:
@@ -711,11 +714,13 @@ def add_contact(body: ContactAddIn, me: User = Depends(current_user), db: Sessio
     c = Connection(requester_id=me.id, addressee_id=other.id, status="pending")
     db.add(c)
     db.commit()
+    accept_link = f"{APP_ORIGIN}/accept-contact?id={c.id}"
+    background.add_task(emailer.send_connection_request_email, other.email, me.display_name, accept_link, settings_mod.smtp_cfg(db))
     return _contact_out(c, me, other)
 
 
 @app.post("/api/contacts/{conn_id}/accept", response_model=ContactOut)
-def accept_contact(conn_id: str, me: User = Depends(current_user), db: Session = Depends(get_db)):
+def accept_contact(conn_id: str, background: BackgroundTasks, me: User = Depends(current_user), db: Session = Depends(get_db)):
     c = db.get(Connection, conn_id)
     if not c or (me.id not in (c.requester_id, c.addressee_id)):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No such request")
@@ -724,6 +729,7 @@ def accept_contact(conn_id: str, me: User = Depends(current_user), db: Session =
     c.status = "accepted"
     db.commit()
     other = db.get(User, c.requester_id)
+    background.add_task(emailer.send_connection_accepted_email, other.email, me.display_name, APP_ORIGIN, settings_mod.smtp_cfg(db))
     return _contact_out(c, me, other)
 
 
@@ -792,7 +798,7 @@ def patch_settings(body: SettingsPatch, _: User = Depends(admin_user), db: Sessi
 
 
 @app.post("/api/admin/users", response_model=InviteOut)
-def admin_create_user(body: AdminCreateIn, tasks: BackgroundTasks, _: User = Depends(admin_user), db: Session = Depends(get_db)):
+def admin_create_user(body: AdminCreateIn, tasks: BackgroundTasks, admin: User = Depends(admin_user), db: Session = Depends(get_db)):
     if body.role not in ROLES:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown role")
     email = body.email.lower()
@@ -806,7 +812,7 @@ def admin_create_user(body: AdminCreateIn, tasks: BackgroundTasks, _: User = Dep
         if db.scalar(select(User).where(User.phone == normalized)):
             raise HTTPException(status.HTTP_409_CONFLICT, "An account already uses that phone number")
     user, link = _create_invited_user(db, email, body.display_name, body.role, normalized)
-    tasks.add_task(emailer.send_reset_email, user.email, link, settings_mod.smtp_cfg(db))
+    tasks.add_task(emailer.send_invite_email, user.email, link, admin.display_name, settings_mod.smtp_cfg(db))
     sms_sent = _sms_invite(db, normalized, link) if normalized else False
     return InviteOut(user=to_out(user), invite_link=link, sms_sent=sms_sent)
 

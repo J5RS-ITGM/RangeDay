@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { useAuth } from '@/auth/AuthContext';
@@ -11,6 +11,7 @@ import { PhoneVerify } from '@/components/PhoneVerify';
 
 export default function Login() {
   const router = useRouter();
+  const { next } = useLocalSearchParams<{ next?: string }>();
   const { theme } = useTheme();
   const toast = useToast();
   const { configured, signIn, signUp } = useAuth();
@@ -41,6 +42,7 @@ export default function Login() {
       : await signUp(email, password, name || email.split('@')[0], phone, phoneToken);
     setBusy(false);
     if (e) { setError(e); return; }
+    if (next) { router.replace(next as string); return; }
     if (mode === 'signup') toast('Account created — check your email if confirmation is required');
     router.replace('/');
   };

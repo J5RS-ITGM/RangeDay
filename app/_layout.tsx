@@ -14,6 +14,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from '@/auth/AuthContext';
 import { ToastProvider } from '@/components/Toast';
+import { PendingProvider } from '@/contacts/PendingContext';
 import { registerPWA } from '@/lib/pwa';
 import { StoreProvider } from '@/store/MockStore';
 import { ThemeProvider, useTheme } from '@/theme/ThemeContext';
@@ -21,7 +22,7 @@ import { ThemeProvider, useTheme } from '@/theme/ThemeContext';
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 /** Screens reachable without a session */
-const PUBLIC_ROUTES = new Set(['login', 'forgot-password', 'reset-password', 'request-account']);
+const PUBLIC_ROUTES = new Set(['login', 'forgot-password', 'reset-password', 'request-account', 'accept-contact']);
 
 /**
  * The lock. When auth is configured, no session means no app: anything
@@ -91,6 +92,7 @@ function ThemedStack() {
           <Stack.Screen name="login" />
           <Stack.Screen name="forgot-password" />
         <Stack.Screen name="request-account" />
+        <Stack.Screen name="accept-contact" />
           <Stack.Screen name="reset-password" />
           <Stack.Screen name="score" />
           <Stack.Screen name="session-edit" />
@@ -128,9 +130,11 @@ export default function RootLayout() {
           <AuthProvider>
             <StoreProvider>
               <ToastProvider>
+                <PendingProvider>
                 <AppFrame>
                   <ThemedStack />
                 </AppFrame>
+                </PendingProvider>
               </ToastProvider>
             </StoreProvider>
           </AuthProvider>
