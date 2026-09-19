@@ -93,6 +93,7 @@ function ThemedStack() {
           <Stack.Screen name="forgot-password" />
         <Stack.Screen name="request-account" />
         <Stack.Screen name="accept-contact" />
+        <Stack.Screen name="post/[id]" />
           <Stack.Screen name="reset-password" />
           <Stack.Screen name="score" />
           <Stack.Screen name="session-edit" />

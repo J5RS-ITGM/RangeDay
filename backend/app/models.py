@@ -63,6 +63,24 @@ class Post(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
 
 
+class PostImage(Base):
+    __tablename__ = "post_images"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    post_id: Mapped[str] = mapped_column(String(32), ForeignKey("posts.id", ondelete="CASCADE"), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)  # storage key
+    ordinal: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class Comment(Base):
+    __tablename__ = "comments"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    post_id: Mapped[str] = mapped_column(String(32), ForeignKey("posts.id", ondelete="CASCADE"), index=True, nullable=False)
+    author_id: Mapped[str] = mapped_column(String(32), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    body: Mapped[str] = mapped_column(String(4000), default="", nullable=False)
+    image_name: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
+
+
 class PostLike(Base):
     __tablename__ = "post_likes"
 

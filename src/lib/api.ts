@@ -81,6 +81,20 @@ export interface PostRow {
   likes: number;
   liked: boolean;
   mine: boolean;
+  can_delete: boolean;
+  image_urls: string[];
+  comment_count: number;
+}
+
+export interface CommentRow {
+  id: string;
+  author: string;
+  initial: string;
+  body: string;
+  image_url: string;
+  created_at: string;
+  mine: boolean;
+  can_delete: boolean;
 }
 
 export interface ContactRow {
@@ -158,8 +172,36 @@ export const api = {
     request<{ user: AppUser; invite_link: string; sms_sent: boolean }>('/admin/users', { method: 'POST', body, token }),
   adminListRequests: (token: string) => request<AccountRequestRow[]>('/admin/requests', { token }),
   listPosts: (token: string) => request<PostRow[]>('/posts', { token }),
-  createPost: (token: string, body: string, vis: 'public' | 'org') =>
-    request<PostRow>('/posts', { method: 'POST', body: { body, vis }, token }),
+  createPost: (token: string, body: string, vis: 'public' | 'org', imageNames: string[] = []) =>
+    request<PostRow>('/posts', { method: 'POST', body: { body, vis, image_names: imageNames }, token }),
+  uploadMedia: async (token: string, uri: string, fileName: string, mime: string): Promise<{ name: string; url: string }> => {
+    const form = new FormData();
+    // React Native FormData file shape; on web we pass a Blob.
+    if (Platform.OS === 'web') {
+      const blob = await (await fetch(uri)).blob();
+      form.append('file', blob, fileName);
+    } else {
+      // @ts-expect-error RN FormData file object
+      form.append('file', { uri, name: fileName, type: mime });
+    }
+    const res = await fetch(`${BASE}/media/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    });
+    if (!res.ok) {
+      let msg = 'Upload failed';
+      try { msg = (await res.json()).detail || msg; } catch { /* */ }
+      throw new Error(msg);
+    }
+    return res.json();
+  },
+  listComments: (token: string, postId: string) =>
+    request<CommentRow[]>(`/posts/${postId}/comments`, { token }),
+  addComment: (token: string, postId: string, body: string, imageName = '') =>
+    request<CommentRow>(`/posts/${postId}/comments`, { method: 'POST', body: { body, image_name: imageName }, token }),
+  deleteComment: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/comments/${id}`, { method: 'DELETE', token }),
   likePost: (token: string, id: string) =>
     request<{ liked: boolean; likes: number }>(`/posts/${id}/like`, { method: 'POST', token }),
   deletePost: (token: string, id: string) =>

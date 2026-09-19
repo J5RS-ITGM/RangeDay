@@ -34,6 +34,9 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
+      UPLOAD_DIR: /srv/uploads
+    volumes:
+      - rangeday_uploads:/srv/uploads
     depends_on:
       rangeday-db:
         condition: service_healthy
@@ -58,6 +61,7 @@ services:
 
 volumes:
   rangeday_pgdata:
+  rangeday_uploads:
 
 networks:
   hub_default:

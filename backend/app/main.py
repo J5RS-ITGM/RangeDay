@@ -2,16 +2,16 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, status
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import emailer, phone as phone_mod, settings as settings_mod
+from . import emailer, phone as phone_mod, settings as settings_mod, storage
 from .db import Base, engine, get_db
-from .models import ROLES, AccountRequest, AppSetting, Connection, PasswordReset, PhoneCode, Post, PostLike, User
+from .models import ROLES, AccountRequest, AppSetting, Comment, Connection, PasswordReset, PhoneCode, Post, PostImage, PostLike, User
 from .security import (
     INVITE_TTL,
     hash_password,
@@ -345,6 +345,23 @@ class PostIn(BaseModel):
     body: str = Field(min_length=1, max_length=4000)
     title: str = Field(default="", max_length=120)
     vis: str = Field(default="public")
+    image_names: list[str] = Field(default_factory=list)  # from /api/media/upload
+
+
+class CommentIn(BaseModel):
+    body: str = Field(default="", max_length=4000)
+    image_name: str = Field(default="", max_length=80)
+
+
+class CommentOut(BaseModel):
+    id: str
+    author: str
+    initial: str
+    body: str
+    image_url: str
+    created_at: datetime
+    mine: bool
+    can_delete: bool
 
 
 class PostOut(BaseModel):
@@ -359,6 +376,9 @@ class PostOut(BaseModel):
     likes: int
     liked: bool
     mine: bool
+    can_delete: bool
+    image_urls: list[str] = Field(default_factory=list)
+    comment_count: int = 0
 
 
 class ContactAddIn(BaseModel):
@@ -502,6 +522,23 @@ class PostIn(BaseModel):
     body: str = Field(min_length=1, max_length=4000)
     title: str = Field(default="", max_length=120)
     vis: str = Field(default="public")
+    image_names: list[str] = Field(default_factory=list)  # from /api/media/upload
+
+
+class CommentIn(BaseModel):
+    body: str = Field(default="", max_length=4000)
+    image_name: str = Field(default="", max_length=80)
+
+
+class CommentOut(BaseModel):
+    id: str
+    author: str
+    initial: str
+    body: str
+    image_url: str
+    created_at: datetime
+    mine: bool
+    can_delete: bool
 
 
 class PostOut(BaseModel):
@@ -516,6 +553,9 @@ class PostOut(BaseModel):
     likes: int
     liked: bool
     mine: bool
+    can_delete: bool
+    image_urls: list[str] = Field(default_factory=list)
+    comment_count: int = 0
 
 
 class ContactAddIn(BaseModel):
@@ -582,6 +622,41 @@ def _contact_out(c: Connection, me: User, other: User) -> ContactOut:
     )
 
 
+UPLOADS_PREFIX = "/api/media/"
+
+
+def _media_url(name: str) -> str:
+    return f"{APP_ORIGIN}{UPLOADS_PREFIX}{name}" if name else ""
+
+
+def _validated_names(db_names: list[str]) -> list[str]:
+    # Only keep names that actually exist on disk (defends against bogus input)
+    out = []
+    for n in db_names[:6]:
+        if storage.open_media(n) is not None:
+            out.append(n)
+    return out
+
+
+@app.post("/api/media/upload")
+def upload_media(file: UploadFile = File(...), _: User = Depends(current_user)):
+    raw = file.file.read()
+    try:
+        name, _mime = storage.process_and_store(raw)
+    except storage.ImageError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
+    return {"name": name, "url": _media_url(name)}
+
+
+@app.get("/api/media/{name}")
+def serve_media(name: str):
+    got = storage.open_media(name)
+    if not got:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    data, mime = got
+    return Response(content=data, media_type=mime, headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
 @app.get("/api/posts", response_model=list[PostOut])
 def list_posts(me: User = Depends(current_user), db: Session = Depends(get_db)):
     # Visibility: public posts to everyone; org posts only within the org.
@@ -596,6 +671,13 @@ def list_posts(me: User = Depends(current_user), db: Session = Depends(get_db)):
         like_counts[pid] = like_counts.get(pid, 0) + 1
     mine_likes = set(db.scalars(select(PostLike.post_id).where(PostLike.post_id.in_(ids), PostLike.user_id == me.id)).all())
     authors = {u.id: u for u in db.scalars(select(User).where(User.id.in_([p.author_id for p in rows]))).all()}
+    imgs: dict[str, list[str]] = {}
+    for im in db.scalars(select(PostImage).where(PostImage.post_id.in_(ids)).order_by(PostImage.ordinal)).all():
+        imgs.setdefault(im.post_id, []).append(_media_url(im.name))
+    ccounts: dict[str, int] = {}
+    for cid in db.scalars(select(Comment.post_id).where(Comment.post_id.in_(ids))).all():
+        ccounts[cid] = ccounts.get(cid, 0) + 1
+    is_admin = me.role == "admin"
     out = []
     for p in rows:
         a = authors.get(p.author_id)
@@ -605,6 +687,8 @@ def list_posts(me: User = Depends(current_user), db: Session = Depends(get_db)):
             org_post=(p.vis == "org"), vis=p.vis, title=p.title, body=p.body,
             created_at=p.created_at, likes=like_counts.get(p.id, 0),
             liked=p.id in mine_likes, mine=(p.author_id == me.id),
+            can_delete=(p.author_id == me.id or is_admin),
+            image_urls=imgs.get(p.id, []), comment_count=ccounts.get(p.id, 0),
         ))
     return out
 
@@ -619,11 +703,16 @@ def create_post(body: PostIn, me: User = Depends(current_user), db: Session = De
     title = body.title.strip() or (text[:48] + ("…" if len(text) > 48 else ""))
     p = Post(author_id=me.id, org=me.org, vis=body.vis, title=title, body=text)
     db.add(p)
+    db.flush()
+    names = _validated_names(body.image_names)
+    for i, n in enumerate(names):
+        db.add(PostImage(post_id=p.id, name=n, ordinal=i))
     db.commit()
     return PostOut(
         id=p.id, author=me.display_name, initial=(me.display_name[:1].upper() or "?"),
         org_post=(p.vis == "org"), vis=p.vis, title=p.title, body=p.body,
         created_at=p.created_at, likes=0, liked=False, mine=True,
+        can_delete=True, image_urls=[_media_url(n) for n in names], comment_count=0,
     )
 
 
@@ -651,7 +740,70 @@ def delete_post(post_id: str, me: User = Depends(current_user), db: Session = De
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No such post")
     if p.author_id != me.id and me.role != "admin":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "You can only delete your own posts")
+    for im in db.scalars(select(PostImage).where(PostImage.post_id == p.id)).all():
+        storage.delete_media(im.name)
+    for cm in db.scalars(select(Comment).where(Comment.post_id == p.id)).all():
+        if cm.image_name:
+            storage.delete_media(cm.image_name)
     db.delete(p)
+    db.commit()
+    return {"ok": True}
+
+
+
+
+def _visible_post_or_404(post_id: str, me: User, db: Session) -> Post:
+    p = db.get(Post, post_id)
+    if not p or (p.vis == "org" and p.org != me.org):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such post")
+    return p
+
+
+@app.get("/api/posts/{post_id}/comments", response_model=list[CommentOut])
+def list_comments(post_id: str, me: User = Depends(current_user), db: Session = Depends(get_db)):
+    _visible_post_or_404(post_id, me, db)
+    rows = db.scalars(select(Comment).where(Comment.post_id == post_id).order_by(Comment.created_at)).all()
+    authors = {u.id: u for u in db.scalars(select(User).where(User.id.in_([c.author_id for c in rows] or [""]))).all()}
+    is_admin = me.role == "admin"
+    out = []
+    for c in rows:
+        a = authors.get(c.author_id)
+        name = a.display_name if a else "Unknown"
+        out.append(CommentOut(
+            id=c.id, author=name, initial=(name[:1].upper() or "?"), body=c.body,
+            image_url=_media_url(c.image_name), created_at=c.created_at,
+            mine=(c.author_id == me.id), can_delete=(c.author_id == me.id or is_admin),
+        ))
+    return out
+
+
+@app.post("/api/posts/{post_id}/comments", response_model=CommentOut)
+def add_comment(post_id: str, body: CommentIn, me: User = Depends(current_user), db: Session = Depends(get_db)):
+    _visible_post_or_404(post_id, me, db)
+    text = body.body.strip()
+    image_name = body.image_name if body.image_name and storage.open_media(body.image_name) else ""
+    if not text and not image_name:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Write something or attach a photo")
+    c = Comment(post_id=post_id, author_id=me.id, body=text, image_name=image_name)
+    db.add(c)
+    db.commit()
+    return CommentOut(
+        id=c.id, author=me.display_name, initial=(me.display_name[:1].upper() or "?"),
+        body=c.body, image_url=_media_url(c.image_name), created_at=c.created_at,
+        mine=True, can_delete=True,
+    )
+
+
+@app.delete("/api/comments/{comment_id}")
+def delete_comment(comment_id: str, me: User = Depends(current_user), db: Session = Depends(get_db)):
+    c = db.get(Comment, comment_id)
+    if not c:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such comment")
+    if c.author_id != me.id and me.role != "admin":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You can only delete your own comments")
+    if c.image_name:
+        storage.delete_media(c.image_name)
+    db.delete(c)
     db.commit()
     return {"ok": True}
 
@@ -780,6 +932,41 @@ def _contact_out(c: Connection, me: User, other: User) -> ContactOut:
     )
 
 
+UPLOADS_PREFIX = "/api/media/"
+
+
+def _media_url(name: str) -> str:
+    return f"{APP_ORIGIN}{UPLOADS_PREFIX}{name}" if name else ""
+
+
+def _validated_names(db_names: list[str]) -> list[str]:
+    # Only keep names that actually exist on disk (defends against bogus input)
+    out = []
+    for n in db_names[:6]:
+        if storage.open_media(n) is not None:
+            out.append(n)
+    return out
+
+
+@app.post("/api/media/upload")
+def upload_media(file: UploadFile = File(...), _: User = Depends(current_user)):
+    raw = file.file.read()
+    try:
+        name, _mime = storage.process_and_store(raw)
+    except storage.ImageError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
+    return {"name": name, "url": _media_url(name)}
+
+
+@app.get("/api/media/{name}")
+def serve_media(name: str):
+    got = storage.open_media(name)
+    if not got:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    data, mime = got
+    return Response(content=data, media_type=mime, headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
 @app.get("/api/posts", response_model=list[PostOut])
 def list_posts(me: User = Depends(current_user), db: Session = Depends(get_db)):
     # Visibility: public posts to everyone; org posts only within the org.
@@ -794,6 +981,13 @@ def list_posts(me: User = Depends(current_user), db: Session = Depends(get_db)):
         like_counts[pid] = like_counts.get(pid, 0) + 1
     mine_likes = set(db.scalars(select(PostLike.post_id).where(PostLike.post_id.in_(ids), PostLike.user_id == me.id)).all())
     authors = {u.id: u for u in db.scalars(select(User).where(User.id.in_([p.author_id for p in rows]))).all()}
+    imgs: dict[str, list[str]] = {}
+    for im in db.scalars(select(PostImage).where(PostImage.post_id.in_(ids)).order_by(PostImage.ordinal)).all():
+        imgs.setdefault(im.post_id, []).append(_media_url(im.name))
+    ccounts: dict[str, int] = {}
+    for cid in db.scalars(select(Comment.post_id).where(Comment.post_id.in_(ids))).all():
+        ccounts[cid] = ccounts.get(cid, 0) + 1
+    is_admin = me.role == "admin"
     out = []
     for p in rows:
         a = authors.get(p.author_id)
@@ -803,6 +997,8 @@ def list_posts(me: User = Depends(current_user), db: Session = Depends(get_db)):
             org_post=(p.vis == "org"), vis=p.vis, title=p.title, body=p.body,
             created_at=p.created_at, likes=like_counts.get(p.id, 0),
             liked=p.id in mine_likes, mine=(p.author_id == me.id),
+            can_delete=(p.author_id == me.id or is_admin),
+            image_urls=imgs.get(p.id, []), comment_count=ccounts.get(p.id, 0),
         ))
     return out
 
@@ -817,11 +1013,16 @@ def create_post(body: PostIn, me: User = Depends(current_user), db: Session = De
     title = body.title.strip() or (text[:48] + ("…" if len(text) > 48 else ""))
     p = Post(author_id=me.id, org=me.org, vis=body.vis, title=title, body=text)
     db.add(p)
+    db.flush()
+    names = _validated_names(body.image_names)
+    for i, n in enumerate(names):
+        db.add(PostImage(post_id=p.id, name=n, ordinal=i))
     db.commit()
     return PostOut(
         id=p.id, author=me.display_name, initial=(me.display_name[:1].upper() or "?"),
         org_post=(p.vis == "org"), vis=p.vis, title=p.title, body=p.body,
         created_at=p.created_at, likes=0, liked=False, mine=True,
+        can_delete=True, image_urls=[_media_url(n) for n in names], comment_count=0,
     )
 
 
@@ -849,6 +1050,11 @@ def delete_post(post_id: str, me: User = Depends(current_user), db: Session = De
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No such post")
     if p.author_id != me.id and me.role != "admin":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "You can only delete your own posts")
+    for im in db.scalars(select(PostImage).where(PostImage.post_id == p.id)).all():
+        storage.delete_media(im.name)
+    for cm in db.scalars(select(Comment).where(Comment.post_id == p.id)).all():
+        if cm.image_name:
+            storage.delete_media(cm.image_name)
     db.delete(p)
     db.commit()
     return {"ok": True}
